@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Trash2, Play, Save } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, Play, Save } from "lucide-react";
 import DesmosCalculator, { type DesmosHandle } from "@/components/graph/DesmosCalculator";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -67,6 +67,11 @@ export default function NewActivityPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const desmosRef = useRef<DesmosHandle>(null);
+
+  // ── Panel resize / collapse state ─────────────────────────────────────────
+  const [leftWidth, setLeftWidth] = useState(176);
+  const [rightWidth, setRightWidth] = useState(256);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
 
   useEffect(() => {
     setActivity(SEED_ACTIVITY);
@@ -170,36 +175,75 @@ export default function NewActivityPage() {
 
       {/* ── Main 3-column layout ─────────────────────────────────────── */}
       <div className="flex flex-1 min-h-0">
-        {/* ── Left: Slide list ──────────────────────────────────────── */}
-        <aside
-          className="w-44 flex-shrink-0 flex flex-col border-r overflow-y-auto"
-          style={{ backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}
-        >
-          <div className="p-2 flex-1">
-            {slides.map((slide, i) => (
-              <SlideThumb
-                key={slide.id}
-                slide={slide}
-                index={i}
-                isActive={i === activeSlideIndex}
-                onSelect={() => setActiveSlide(i)}
-                onRemove={slides.length > 1 ? () => removeSlide(i) : undefined}
-              />
-            ))}
+        {/* ── Left: Slide list (collapsible + resizable) ────────────── */}
+        {leftCollapsed ? (
+          /* Collapsed strip */
+          <aside
+            className="flex-shrink-0 flex flex-col items-center pt-2 border-r"
+            style={{ width: 28, backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}
+          >
             <button
-              onClick={() => addSlide(slides.length - 1)}
-              className="w-full mt-2 flex items-center justify-center gap-1.5 py-2 rounded-lg border-dashed border-2 text-xs font-medium transition-colors"
-              style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.backgroundColor = "var(--color-white)")
-              }
-              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+              onClick={() => setLeftCollapsed(false)}
+              title="Expand slides panel"
+              className="p-1 rounded hover:bg-[var(--color-border)] transition-colors"
+              style={{ color: "var(--color-muted)" }}
             >
-              <Plus size={14} />
-              Add slide
+              <ChevronRight size={14} />
             </button>
-          </div>
-        </aside>
+          </aside>
+        ) : (
+          <aside
+            className="flex-shrink-0 flex flex-col border-r overflow-y-auto"
+            style={{ width: leftWidth, backgroundColor: "var(--color-surface)", borderColor: "var(--color-border)" }}
+          >
+            {/* Header with collapse button */}
+            <div
+              className="flex items-center justify-between px-2 py-1.5 border-b flex-shrink-0"
+              style={{ borderColor: "var(--color-border)" }}
+            >
+              <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-muted)" }}>
+                Slides
+              </span>
+              <button
+                onClick={() => setLeftCollapsed(true)}
+                title="Collapse slides panel"
+                className="p-0.5 rounded hover:bg-[var(--color-border)] transition-colors"
+                style={{ color: "var(--color-muted)" }}
+              >
+                <ChevronLeft size={14} />
+              </button>
+            </div>
+            <div className="p-2 flex-1 overflow-y-auto">
+              {slides.map((slide, i) => (
+                <SlideThumb
+                  key={slide.id}
+                  slide={slide}
+                  index={i}
+                  isActive={i === activeSlideIndex}
+                  onSelect={() => setActiveSlide(i)}
+                  onRemove={slides.length > 1 ? () => removeSlide(i) : undefined}
+                />
+              ))}
+              <button
+                onClick={() => addSlide(slides.length - 1)}
+                className="w-full mt-2 flex items-center justify-center gap-1.5 py-2 rounded-lg border-dashed border-2 text-xs font-medium transition-colors"
+                style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--color-white)")}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+              >
+                <Plus size={14} />
+                Add slide
+              </button>
+            </div>
+          </aside>
+        )}
+
+        {/* ── Resize handle: left ───────────────────────────────────── */}
+        {!leftCollapsed && (
+          <ResizeHandle
+            onMouseDown={(e) => startResize(e, leftWidth, setLeftWidth, 120, 320, 1)}
+          />
+        )}
 
         {/* ── Center: Desmos Calculator ─────────────────────────────── */}
         <main className="flex-1 flex flex-col min-w-0 min-h-0">
@@ -258,10 +302,15 @@ export default function NewActivityPage() {
           )}
         </main>
 
-        {/* ── Right: Checkpoint panel ───────────────────────────────── */}
+        {/* ── Resize handle: right ─────────────────────────────────── */}
+        <ResizeHandle
+          onMouseDown={(e) => startResize(e, rightWidth, setRightWidth, 180, 420, -1)}
+        />
+
+        {/* ── Right: Checkpoint panel (resizable) ──────────────────── */}
         <aside
-          className="w-64 flex-shrink-0 flex flex-col border-l overflow-y-auto"
-          style={{ backgroundColor: "var(--color-white)", borderColor: "var(--color-border)" }}
+          className="flex-shrink-0 flex flex-col border-l overflow-y-auto"
+          style={{ width: rightWidth, backgroundColor: "var(--color-white)", borderColor: "var(--color-border)" }}
         >
           {activeSlide ? (
             <div className="p-3 flex flex-col gap-3">
@@ -313,6 +362,50 @@ export default function NewActivityPage() {
           )}
         </aside>
       </div>
+    </div>
+  );
+}
+
+// ── Panel resize helpers ───────────────────────────────────────────────────
+
+function startResize(
+  e: React.MouseEvent,
+  startWidth: number,
+  setWidth: (w: number) => void,
+  min: number,
+  max: number,
+  direction: 1 | -1
+) {
+  e.preventDefault();
+  const startX = e.clientX;
+  const onMove = (ev: MouseEvent) =>
+    setWidth(Math.max(min, Math.min(max, startWidth + (ev.clientX - startX) * direction)));
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  };
+  document.body.style.cursor = "col-resize";
+  document.body.style.userSelect = "none";
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      className="relative flex-shrink-0 cursor-col-resize group"
+      style={{ width: 4, backgroundColor: "var(--color-border)" }}
+      onMouseDown={onMouseDown}
+    >
+      {/* wider invisible hit area */}
+      <div className="absolute inset-y-0 -left-1 -right-1" />
+      {/* teal highlight on hover */}
+      <div
+        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity"
+        style={{ backgroundColor: "var(--color-brand-teal)" }}
+      />
     </div>
   );
 }
