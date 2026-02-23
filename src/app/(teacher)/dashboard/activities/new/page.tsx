@@ -62,6 +62,8 @@ export default function NewActivityPage() {
     addSlide,
     removeSlide,
     updateActivity,
+    pendingActivity,
+    clearPendingActivity,
   } = useBuilderStore();
 
   const [saving, setSaving] = useState(false);
@@ -74,8 +76,14 @@ export default function NewActivityPage() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
 
   useEffect(() => {
-    setActivity(SEED_ACTIVITY);
-  }, [setActivity]);
+    if (pendingActivity) {
+      setActivity(pendingActivity);
+      clearPendingActivity();
+    } else {
+      setActivity(SEED_ACTIVITY);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const slides = activity?.slides ?? [];
   const activeSlide = slides[activeSlideIndex] ?? null;

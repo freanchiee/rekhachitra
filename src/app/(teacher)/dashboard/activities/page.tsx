@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Clock, MoreVertical } from "lucide-react";
+import { Plus, Clock, MoreVertical, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import type { Metadata } from "next";
 
@@ -47,10 +47,16 @@ export default function ActivitiesPage() {
             {mockActivities.length} activit{mockActivities.length === 1 ? "y" : "ies"}
           </p>
         </div>
-        <Link href="/dashboard/activities/new" className="btn btn-primary gap-2">
-          <Plus size={16} />
-          New Activity
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link href="/dashboard/activities/generate" className="btn btn-outline gap-2">
+            <Sparkles size={16} />
+            Generate with AI
+          </Link>
+          <Link href="/dashboard/activities/new" className="btn btn-primary gap-2">
+            <Plus size={16} />
+            New Activity
+          </Link>
+        </div>
       </div>
 
       {/* Activity grid */}

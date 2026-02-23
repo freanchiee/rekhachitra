@@ -163,6 +163,8 @@ interface BuilderStore {
   activity: Activity | null;
   activeSlideIndex: number;
   isDirty: boolean;
+  /** Activity queued by the AI generator — builder picks it up on mount then clears it. */
+  pendingActivity: Activity | null;
 
   // Actions
   setActivity: (activity: Activity) => void;
@@ -173,12 +175,15 @@ interface BuilderStore {
   reorderSlide: (from: number, to: number) => void;
   updateActivity: (patch: Partial<Activity>) => void;
   markSaved: () => void;
+  setPendingActivity: (activity: Activity) => void;
+  clearPendingActivity: () => void;
 }
 
 export const useBuilderStore = create<BuilderStore>((set, get) => ({
   activity: null,
   activeSlideIndex: 0,
   isDirty: false,
+  pendingActivity: null,
 
   setActivity: (activity) => {
     set({ activity, activeSlideIndex: 0, isDirty: false });
@@ -251,5 +256,13 @@ export const useBuilderStore = create<BuilderStore>((set, get) => ({
 
   markSaved: () => {
     set({ isDirty: false });
+  },
+
+  setPendingActivity: (activity) => {
+    set({ pendingActivity: activity });
+  },
+
+  clearPendingActivity: () => {
+    set({ pendingActivity: null });
   },
 }));

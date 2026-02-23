@@ -13,6 +13,7 @@
     "ci": "pnpm type-check && pnpm lint && pnpm build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
     "@tanstack/react-query": "^5.90.21",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
