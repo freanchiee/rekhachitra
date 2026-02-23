@@ -209,6 +209,7 @@ export const useBuilderStore = create<BuilderStore>((set, get) => ({
       title: null,
       instructions: null,
       graphState: null,
+      desmosState: null,
       checkpoint: null,
       createdAt: new Date().toISOString(),
     };

@@ -1,17 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Plus, Trash2, Play, Save } from "lucide-react";
-import { GraphCanvas } from "@/components/graph/GraphCanvas";
-import { ExpressionPanel } from "@/components/graph/ExpressionPanel";
+import DesmosCalculator, { type DesmosHandle } from "@/components/graph/DesmosCalculator";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { useBuilderStore } from "@/lib/store/session.store";
 import { generateId } from "@/lib/utils/session";
-import { DEFAULT_GRAPH_STATE } from "@/lib/utils/graph";
-import type { Activity, Slide, GraphState, CheckpointType } from "@/types";
+import type { Activity, Slide, CheckpointType } from "@/types";
 import { cn } from "@/lib/utils/cn";
 
 // ── Seed activity ──────────────────────────────────────────────────────────
@@ -31,7 +30,8 @@ const SEED_ACTIVITY: Activity = {
       type: "graph",
       title: "Introduction",
       instructions: "Explore the graph below.",
-      graphState: DEFAULT_GRAPH_STATE,
+      graphState: null,
+      desmosState: null,
       checkpoint: null,
       createdAt: new Date().toISOString(),
     },
@@ -52,11 +52,21 @@ const checkpointTypes: { value: CheckpointType; label: string; icon: string }[] 
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function NewActivityPage() {
-  const { activity, activeSlideIndex, isDirty, setActivity, setActiveSlide, updateSlide, addSlide, removeSlide, updateActivity } =
-    useBuilderStore();
+  const {
+    activity,
+    activeSlideIndex,
+    isDirty,
+    setActivity,
+    setActiveSlide,
+    updateSlide,
+    addSlide,
+    removeSlide,
+    updateActivity,
+  } = useBuilderStore();
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const desmosRef = useRef<DesmosHandle>(null);
 
   useEffect(() => {
     setActivity(SEED_ACTIVITY);
@@ -67,15 +77,10 @@ export default function NewActivityPage() {
 
   const handleSave = async () => {
     setSaving(true);
-    // In production: PATCH /api/activities/:id
     await new Promise((r) => setTimeout(r, 600));
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-  };
-
-  const handleGraphChange = (state: GraphState) => {
-    updateSlide(activeSlideIndex, { graphState: state });
   };
 
   const setCheckpointType = (type: CheckpointType) => {
@@ -105,7 +110,10 @@ export default function NewActivityPage() {
   if (!activity) {
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="w-8 h-8 border-3 border-[var(--color-brand-teal)] border-t-transparent rounded-full animate-spin" />
+        <div
+          className="w-8 h-8 border-2 rounded-full animate-spin"
+          style={{ borderColor: "var(--color-brand-teal)", borderTopColor: "transparent" }}
+        />
       </div>
     );
   }
@@ -119,17 +127,24 @@ export default function NewActivityPage() {
       >
         <Link
           href="/dashboard/activities"
-          className="p-1.5 rounded-lg hover:bg-[var(--color-surface)] transition-colors"
+          className="p-1.5 rounded-lg transition-colors"
+          style={{ color: "var(--color-muted)" }}
         >
-          <ArrowLeft size={18} style={{ color: "var(--color-muted)" }} />
+          <ArrowLeft size={18} />
         </Link>
 
         <input
           type="text"
           value={activity.title}
           onChange={(e) => updateActivity({ title: e.target.value })}
-          className="flex-1 text-lg font-bold bg-transparent outline-none border-b-2 border-transparent focus:border-[var(--color-brand-teal)] px-1 transition-colors"
-          style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}
+          className="flex-1 text-lg font-bold bg-transparent outline-none border-b-2 border-transparent px-1 transition-colors"
+          style={{
+            color: "var(--color-ink)",
+            fontFamily: "var(--font-heading)",
+            borderBottomColor: "transparent",
+          }}
+          onFocus={(e) => (e.currentTarget.style.borderBottomColor = "var(--color-brand-teal)")}
+          onBlur={(e) => (e.currentTarget.style.borderBottomColor = "transparent")}
           placeholder="Activity title..."
         />
 
@@ -139,13 +154,7 @@ export default function NewActivityPage() {
           </Badge>
         )}
 
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={handleSave}
-          loading={saving}
-          className="gap-1.5"
-        >
+        <Button variant="ghost" size="sm" onClick={handleSave} loading={saving} className="gap-1.5">
           <Save size={15} />
           {saved ? "Saved!" : "Save"}
         </Button>
@@ -179,11 +188,12 @@ export default function NewActivityPage() {
             ))}
             <button
               onClick={() => addSlide(slides.length - 1)}
-              className="w-full mt-2 flex items-center justify-center gap-1.5 py-2 rounded-lg border-dashed border-2 text-xs font-medium transition-colors hover:bg-white"
-              style={{
-                borderColor: "var(--color-border)",
-                color: "var(--color-muted)",
-              }}
+              className="w-full mt-2 flex items-center justify-center gap-1.5 py-2 rounded-lg border-dashed border-2 text-xs font-medium transition-colors"
+              style={{ borderColor: "var(--color-border)", color: "var(--color-muted)" }}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.backgroundColor = "var(--color-white)")
+              }
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
             >
               <Plus size={14} />
               Add slide
@@ -191,43 +201,56 @@ export default function NewActivityPage() {
           </div>
         </aside>
 
-        {/* ── Center: Graph canvas ──────────────────────────────────── */}
-        <main
-          className="flex-1 flex flex-col min-w-0"
-          style={{ backgroundColor: "#f0f4f8" }}
-        >
+        {/* ── Center: Desmos Calculator ─────────────────────────────── */}
+        <main className="flex-1 flex flex-col min-w-0 min-h-0">
           {activeSlide ? (
-            <div className="flex-1 flex flex-col p-4 gap-3 overflow-auto">
+            <>
               {/* Slide meta */}
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <input
-                    type="text"
-                    value={activeSlide.title ?? ""}
-                    onChange={(e) => updateSlide(activeSlideIndex, { title: e.target.value })}
-                    placeholder="Slide title (optional)"
-                    className="w-full text-base font-semibold bg-white border-b-2 border-transparent focus:border-[var(--color-brand-teal)] outline-none px-2 py-1.5 rounded-t-lg transition-colors"
-                    style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}
-                  />
-                </div>
+              <div
+                className="flex-shrink-0 flex gap-3 px-4 pt-3 pb-2 border-b"
+                style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-white)" }}
+              >
+                <input
+                  type="text"
+                  value={activeSlide.title ?? ""}
+                  onChange={(e) => updateSlide(activeSlideIndex, { title: e.target.value })}
+                  placeholder="Slide title (optional)"
+                  className="flex-1 text-sm font-semibold bg-transparent outline-none border-b-2 border-transparent px-1 py-0.5 transition-colors"
+                  style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}
+                  onFocus={(e) =>
+                    (e.currentTarget.style.borderBottomColor = "var(--color-brand-teal)")
+                  }
+                  onBlur={(e) => (e.currentTarget.style.borderBottomColor = "transparent")}
+                />
+                <input
+                  type="text"
+                  value={activeSlide.instructions ?? ""}
+                  onChange={(e) =>
+                    updateSlide(activeSlideIndex, { instructions: e.target.value })
+                  }
+                  placeholder="Student instructions (optional)"
+                  className="flex-1 text-sm bg-transparent outline-none border-b-2 border-transparent px-1 py-0.5 transition-colors"
+                  style={{ color: "var(--color-ink-soft)", fontFamily: "var(--font-body)" }}
+                  onFocus={(e) =>
+                    (e.currentTarget.style.borderBottomColor = "var(--color-brand-teal)")
+                  }
+                  onBlur={(e) => (e.currentTarget.style.borderBottomColor = "transparent")}
+                />
               </div>
 
-              <input
-                type="text"
-                value={activeSlide.instructions ?? ""}
-                onChange={(e) => updateSlide(activeSlideIndex, { instructions: e.target.value })}
-                placeholder="Instructions for students (optional)"
-                className="w-full text-sm bg-white border border-[var(--color-border)] rounded-lg px-3 py-2 outline-none focus:border-[var(--color-brand-teal)] transition-colors"
-                style={{ color: "var(--color-ink-soft)", fontFamily: "var(--font-body)" }}
-              />
-
-              {/* Graph canvas */}
-              <GraphCanvas
-                state={activeSlide.graphState ?? DEFAULT_GRAPH_STATE}
-                onChange={handleGraphChange}
-                className="flex-1 min-h-64"
-              />
-            </div>
+              {/* Desmos calculator — fills remaining height */}
+              <div className="flex-1 relative min-h-0">
+                <DesmosCalculator
+                  key={activeSlide.id}
+                  ref={desmosRef}
+                  initialState={activeSlide.desmosState ?? undefined}
+                  onStateChange={(state) =>
+                    updateSlide(activeSlideIndex, { desmosState: state })
+                  }
+                  className="absolute inset-0"
+                />
+              </div>
+            </>
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <p style={{ color: "var(--color-muted)" }}>Select a slide</p>
@@ -235,69 +258,54 @@ export default function NewActivityPage() {
           )}
         </main>
 
-        {/* ── Right: Expression + Checkpoint panel ─────────────────── */}
+        {/* ── Right: Checkpoint panel ───────────────────────────────── */}
         <aside
           className="w-64 flex-shrink-0 flex flex-col border-l overflow-y-auto"
           style={{ backgroundColor: "var(--color-white)", borderColor: "var(--color-border)" }}
         >
           {activeSlide ? (
-            <>
-              {/* Expressions */}
-              <div className="flex-1 border-b" style={{ borderColor: "var(--color-border)" }}>
-                <ExpressionPanel
-                  state={activeSlide.graphState ?? DEFAULT_GRAPH_STATE}
-                  onChange={handleGraphChange}
-                />
-              </div>
+            <div className="p-3 flex flex-col gap-3">
+              <p
+                className="text-xs font-semibold uppercase tracking-wide"
+                style={{ color: "var(--color-muted)", fontFamily: "var(--font-body)" }}
+              >
+                Checkpoint
+              </p>
 
-              {/* Checkpoint */}
-              <div className="p-3 flex flex-col gap-3">
-                <p
-                  className="text-xs font-semibold uppercase tracking-wide"
-                  style={{ color: "var(--color-muted)", fontFamily: "var(--font-body)" }}
-                >
-                  Checkpoint
-                </p>
-
-                {/* Type selector */}
-                <div className="flex flex-col gap-1">
-                  {checkpointTypes.map((opt) => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setCheckpointType(opt.value)}
-                      className={cn(
-                        "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-left transition-colors",
+              {/* Type selector */}
+              <div className="flex flex-col gap-1">
+                {checkpointTypes.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setCheckpointType(opt.value)}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-left transition-colors"
+                    )}
+                    style={{
+                      backgroundColor:
                         (activeSlide.checkpoint?.type ?? "none") === opt.value
-                          ? "text-white"
-                          : "hover:bg-[var(--color-surface)]"
-                      )}
-                      style={{
-                        backgroundColor:
-                          (activeSlide.checkpoint?.type ?? "none") === opt.value
-                            ? "var(--color-brand-teal)"
-                            : "transparent",
-                        color:
-                          (activeSlide.checkpoint?.type ?? "none") === opt.value
-                            ? "white"
-                            : "var(--color-ink-soft)",
-                        fontFamily: "var(--font-body)",
-                      }}
-                    >
-                      <span>{opt.icon}</span>
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Checkpoint fields */}
-                {activeSlide.checkpoint && activeSlide.checkpoint.type !== "none" && (
-                  <CheckpointEditor
-                    checkpoint={activeSlide.checkpoint}
-                    onChange={(cp) => updateSlide(activeSlideIndex, { checkpoint: cp })}
-                  />
-                )}
+                          ? "var(--color-brand-teal)"
+                          : "transparent",
+                      color:
+                        (activeSlide.checkpoint?.type ?? "none") === opt.value
+                          ? "white"
+                          : "var(--color-ink-soft)",
+                      fontFamily: "var(--font-body)",
+                    }}
+                  >
+                    <span>{opt.icon}</span>
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-            </>
+
+              {activeSlide.checkpoint && activeSlide.checkpoint.type !== "none" && (
+                <CheckpointEditor
+                  checkpoint={activeSlide.checkpoint}
+                  onChange={(cp) => updateSlide(activeSlideIndex, { checkpoint: cp })}
+                />
+              )}
+            </div>
           ) : (
             <div className="p-4 text-center" style={{ color: "var(--color-muted)" }}>
               Select a slide to edit
@@ -327,44 +335,46 @@ function SlideThumb({
   return (
     <div
       className={cn(
-        "relative group rounded-xl mb-1.5 cursor-pointer overflow-hidden border-2 transition-all",
-        isActive
-          ? "border-[var(--color-brand-teal)]"
-          : "border-transparent hover:border-[var(--color-border)]"
+        "relative group rounded-xl mb-1.5 cursor-pointer overflow-hidden border-2 transition-all"
       )}
+      style={{
+        borderColor: isActive ? "var(--color-brand-teal)" : "transparent",
+      }}
       onClick={onSelect}
     >
-      {/* Thumbnail preview */}
       <div
         className="w-full h-20 flex items-center justify-center text-2xl"
         style={{
-          backgroundColor: isActive
-            ? "rgba(27, 120, 136, 0.06)"
-            : "var(--color-white)",
+          backgroundColor: isActive ? "rgba(27, 120, 136, 0.06)" : "var(--color-white)",
         }}
       >
         {slide.type === "graph" ? "📈" : slide.type === "mcq" ? "🔘" : "✏️"}
       </div>
-      {/* Slide number label */}
       <div
         className="px-2 py-1 flex items-center justify-between"
-        style={{ backgroundColor: isActive ? "rgba(27, 120, 136, 0.04)" : "var(--color-surface)" }}
+        style={{
+          backgroundColor: isActive ? "rgba(27, 120, 136, 0.04)" : "var(--color-surface)",
+        }}
       >
         <span
           className="text-xs font-medium"
-          style={{ color: isActive ? "var(--color-brand-teal)" : "var(--color-muted)", fontFamily: "var(--font-body)" }}
+          style={{
+            color: isActive ? "var(--color-brand-teal)" : "var(--color-muted)",
+            fontFamily: "var(--font-body)",
+          }}
         >
           {index + 1}
         </span>
-        {slide.checkpoint && (
-          <span className="text-xs">💬</span>
-        )}
+        {slide.checkpoint && <span className="text-xs">💬</span>}
       </div>
-      {/* Remove button */}
       {onRemove && (
         <button
-          onClick={(e) => { e.stopPropagation(); onRemove(); }}
-          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-0.5 rounded bg-white shadow-sm transition-opacity"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-0.5 rounded shadow-sm transition-opacity"
+          style={{ backgroundColor: "var(--color-white)" }}
           title="Remove slide"
         >
           <Trash2 size={12} color="#f65e5d" />
@@ -406,12 +416,17 @@ function CheckpointEditor({
                 onClick={() =>
                   onChange({
                     ...checkpoint,
-                    options: checkpoint.options?.map((o) => ({ ...o, isCorrect: o.id === opt.id })),
+                    options: checkpoint.options?.map((o) => ({
+                      ...o,
+                      isCorrect: o.id === opt.id,
+                    })),
                   })
                 }
                 className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 border-2 transition-colors"
                 style={{
-                  borderColor: opt.isCorrect ? "var(--color-brand-mint)" : "var(--color-border)",
+                  borderColor: opt.isCorrect
+                    ? "var(--color-brand-mint)"
+                    : "var(--color-border)",
                   backgroundColor: opt.isCorrect ? "var(--color-brand-mint)" : "transparent",
                 }}
               >
@@ -435,8 +450,18 @@ function CheckpointEditor({
                   })
                 }
                 placeholder={`Option ${String.fromCharCode(65 + i)}`}
-                className="flex-1 text-xs px-2 py-1.5 rounded-lg border outline-none focus:border-[var(--color-brand-teal)] transition-colors min-w-0"
-                style={{ borderColor: "var(--color-border)", color: "var(--color-ink)", fontFamily: "var(--font-body)" }}
+                className="flex-1 text-xs px-2 py-1.5 rounded-lg border outline-none transition-colors min-w-0"
+                style={{
+                  borderColor: "var(--color-border)",
+                  color: "var(--color-ink)",
+                  fontFamily: "var(--font-body)",
+                }}
+                onFocus={(e) =>
+                  (e.currentTarget.style.borderColor = "var(--color-brand-teal)")
+                }
+                onBlur={(e) =>
+                  (e.currentTarget.style.borderColor = "var(--color-border)")
+                }
               />
             </div>
           ))}
@@ -445,7 +470,10 @@ function CheckpointEditor({
 
       <div className="flex gap-2">
         <div className="flex-1">
-          <label className="text-xs font-semibold block mb-1" style={{ color: "var(--color-muted)" }}>
+          <label
+            className="text-xs font-semibold block mb-1"
+            style={{ color: "var(--color-muted)" }}
+          >
             Time limit (s)
           </label>
           <input
@@ -454,12 +482,19 @@ function CheckpointEditor({
             max={300}
             value={checkpoint.timeLimit ?? 30}
             onChange={(e) => onChange({ ...checkpoint, timeLimit: Number(e.target.value) })}
-            className="w-full text-xs px-2 py-1.5 rounded-lg border outline-none focus:border-[var(--color-brand-teal)] transition-colors"
-            style={{ borderColor: "var(--color-border)", color: "var(--color-ink)", fontFamily: "var(--font-body)" }}
+            className="w-full text-xs px-2 py-1.5 rounded-lg border outline-none transition-colors"
+            style={{
+              borderColor: "var(--color-border)",
+              color: "var(--color-ink)",
+              fontFamily: "var(--font-body)",
+            }}
           />
         </div>
         <div className="flex-1">
-          <label className="text-xs font-semibold block mb-1" style={{ color: "var(--color-muted)" }}>
+          <label
+            className="text-xs font-semibold block mb-1"
+            style={{ color: "var(--color-muted)" }}
+          >
             Points
           </label>
           <input
@@ -468,8 +503,12 @@ function CheckpointEditor({
             max={100}
             value={checkpoint.points ?? 10}
             onChange={(e) => onChange({ ...checkpoint, points: Number(e.target.value) })}
-            className="w-full text-xs px-2 py-1.5 rounded-lg border outline-none focus:border-[var(--color-brand-teal)] transition-colors"
-            style={{ borderColor: "var(--color-border)", color: "var(--color-ink)", fontFamily: "var(--font-body)" }}
+            className="w-full text-xs px-2 py-1.5 rounded-lg border outline-none transition-colors"
+            style={{
+              borderColor: "var(--color-border)",
+              color: "var(--color-ink)",
+              fontFamily: "var(--font-body)",
+            }}
           />
         </div>
       </div>

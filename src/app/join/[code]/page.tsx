@@ -4,7 +4,7 @@ import { useState, use } from "react";
 import { ArrowRight, CheckCircle, XCircle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { GraphCanvas } from "@/components/graph/GraphCanvas";
+import DesmosCalculator from "@/components/graph/DesmosCalculator";
 import { CountdownTimer } from "@/components/session/CountdownTimer";
 import { Avatar } from "@/components/ui/Avatar";
 import { useStudentSessionStore } from "@/lib/store/session.store";
@@ -38,10 +38,15 @@ const DEMO_SESSION: Session = {
         type: "graph",
         title: "Explore y = 2x + 1",
         instructions: "Look at the line. What is the slope? What is the y-intercept?",
-        graphState: {
-          expressions: [{ id: "e1", latex: "y = 2x + 1", type: "equation", color: "#1b7888" }],
-          viewport: { xMin: -10, xMax: 10, yMin: -7, yMax: 7 },
-          settings: { showGrid: true, showAxes: true, showLabels: true, polarMode: false },
+        graphState: null,
+        desmosState: {
+          version: 11,
+          graph: { viewport: { xmin: -10, ymin: -7, xmax: 10, ymax: 7 } },
+          expressions: {
+            list: [
+              { type: "expression", id: "1", color: "#1b7888", latex: "y=2x+1" },
+            ],
+          },
         },
         checkpoint: {
           type: "mcq",
@@ -285,12 +290,15 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
         )}
 
         {/* Graph */}
-        {slide?.graphState && (
-          <GraphCanvas
-            state={slide.graphState}
-            readOnly
-            className="min-h-52"
-          />
+        {slide?.desmosState && (
+          <div className="relative w-full rounded-xl overflow-hidden border" style={{ height: 320, borderColor: "var(--color-border)" }}>
+            <DesmosCalculator
+              key={slide.id}
+              readOnly
+              initialState={slide.desmosState}
+              className="absolute inset-0"
+            />
+          </div>
         )}
 
         {/* Checkpoint / question */}

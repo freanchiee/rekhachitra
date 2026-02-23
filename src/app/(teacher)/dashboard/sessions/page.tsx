@@ -7,9 +7,8 @@ import { JoinCodeDisplay } from "@/components/session/JoinCodeDisplay";
 import { ResponseGrid } from "@/components/session/ResponseGrid";
 import { SessionLeaderboard } from "@/components/session/SessionLeaderboard";
 import { CountdownTimer } from "@/components/session/CountdownTimer";
-import { GraphCanvas } from "@/components/graph/GraphCanvas";
+import DesmosCalculator from "@/components/graph/DesmosCalculator";
 import { useTeacherSessionStore } from "@/lib/store/session.store";
-import { DEFAULT_GRAPH_STATE } from "@/lib/utils/graph";
 import type { Activity, Slide, StudentSession } from "@/types";
 import { Badge } from "@/components/ui/Badge";
 
@@ -30,10 +29,11 @@ const DEMO_ACTIVITY: Activity = {
       type: "graph",
       title: "Explore y = 2x + 1",
       instructions: "Look at the line. What is the slope? What is the y-intercept?",
-      graphState: {
-        expressions: [{ id: "e1", latex: "y = 2x + 1", type: "equation", color: "#1b7888" }],
-        viewport: { xMin: -10, xMax: 10, yMin: -7, yMax: 7 },
-        settings: { showGrid: true, showAxes: true, showLabels: true, polarMode: false },
+      graphState: null,
+      desmosState: {
+        version: 11,
+        graph: { viewport: { xmin: -10, ymin: -7, xmax: 10, ymax: 7 } },
+        expressions: { list: [{ type: "expression", id: "1", color: "#1b7888", latex: "y=2x+1" }] },
       },
       checkpoint: {
         type: "mcq",
@@ -56,13 +56,16 @@ const DEMO_ACTIVITY: Activity = {
       type: "graph",
       title: "Compare two lines",
       instructions: "Which line has a steeper slope?",
-      graphState: {
-        expressions: [
-          { id: "e1", latex: "y = 3x + 1", type: "equation", color: "#1b7888" },
-          { id: "e2", latex: "y = x - 2", type: "equation", color: "#f65e5d" },
-        ],
-        viewport: { xMin: -10, xMax: 10, yMin: -7, yMax: 7 },
-        settings: { showGrid: true, showAxes: true, showLabels: true, polarMode: false },
+      graphState: null,
+      desmosState: {
+        version: 11,
+        graph: { viewport: { xmin: -10, ymin: -7, xmax: 10, ymax: 7 } },
+        expressions: {
+          list: [
+            { type: "expression", id: "1", color: "#1b7888", latex: "y=3x+1" },
+            { type: "expression", id: "2", color: "#f65e5d", latex: "y=x-2" },
+          ],
+        },
       },
       checkpoint: {
         type: "mcq",
@@ -213,11 +216,16 @@ export default function SessionsPage() {
               </div>
 
               {/* Graph canvas (read-only in session) */}
-              <GraphCanvas
-                state={currentSlide.graphState ?? DEFAULT_GRAPH_STATE}
-                readOnly
-                className="flex-1 min-h-52"
-              />
+              {currentSlide.desmosState && (
+                <div className="relative flex-1 min-h-52 rounded-xl overflow-hidden border" style={{ borderColor: "var(--color-border)" }}>
+                  <DesmosCalculator
+                    key={currentSlide.id}
+                    readOnly
+                    initialState={currentSlide.desmosState}
+                    className="absolute inset-0"
+                  />
+                </div>
+              )}
 
               {/* MCQ options display */}
               {currentSlide.checkpoint?.type === "mcq" && currentSlide.checkpoint.options && (

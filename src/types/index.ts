@@ -78,6 +78,8 @@ export interface Slide {
   title: string | null;
   instructions: string | null;
   graphState: GraphState | null;
+  /** Serialised Desmos calculator state (from calc.getState()). Preferred over graphState. */
+  desmosState: Record<string, unknown> | null;
   checkpoint: Checkpoint | null;
   createdAt: string;
 }
