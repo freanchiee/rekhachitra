@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Sparkles, ChevronRight, BarChart2, MessageSquare, CheckSquare } from "lucide-react";
+import {
+  ArrowLeft, Sparkles, ChevronRight, BarChart2, MessageSquare,
+  CheckSquare, ChevronDown, Eye, EyeOff, ExternalLink, KeyRound,
+} from "lucide-react";
 import { useBuilderStore } from "@/lib/store/session.store";
 import type { Activity } from "@/types";
 
@@ -21,6 +24,43 @@ const STYLES = [
   { value: "guided", label: "Guided Practice", desc: "Step-by-step scaffolded problem solving" },
   { value: "assessment", label: "Assessment", desc: "Mix of questions to check understanding" },
 ];
+
+const PROVIDERS = [
+  {
+    id: "anthropic" as const,
+    name: "Anthropic (Claude)",
+    model: "claude-sonnet-4-6",
+    keyHint: "Starts with sk-ant-",
+    keyPlaceholder: "sk-ant-api03-...",
+    docsUrl: "https://console.anthropic.com/settings/keys",
+  },
+  {
+    id: "gemini" as const,
+    name: "Google Gemini",
+    model: "gemini-2.0-flash",
+    keyHint: "Starts with AIza",
+    keyPlaceholder: "AIzaSy...",
+    docsUrl: "https://aistudio.google.com/app/apikey",
+  },
+  {
+    id: "deepseek" as const,
+    name: "DeepSeek",
+    model: "deepseek-chat",
+    keyHint: "Starts with sk-",
+    keyPlaceholder: "sk-...",
+    docsUrl: "https://platform.deepseek.com/api_keys",
+  },
+  {
+    id: "minimax" as const,
+    name: "Minimax",
+    model: "MiniMax-Text-01",
+    keyHint: "Bearer token from Minimax dashboard",
+    keyPlaceholder: "eyJ...",
+    docsUrl: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+  },
+] as const;
+
+type ProviderId = (typeof PROVIDERS)[number]["id"];
 
 const LOADING_MESSAGES = [
   "Reading your objectives...",
@@ -46,11 +86,41 @@ export default function GenerateActivityPage() {
   const [numSlides, setNumSlides] = useState(5);
   const [style, setStyle] = useState("exploration");
 
+  // Provider / API key state
+  const [provider, setProvider] = useState<ProviderId>("anthropic");
+  const [apiKey, setApiKey] = useState("");
+  const [showProviderConfig, setShowProviderConfig] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+
   // Page state
   const [phase, setPhase] = useState<Phase>("form");
   const [loadingMsg, setLoadingMsg] = useState(LOADING_MESSAGES[0]);
   const [error, setError] = useState<string | null>(null);
   const [generated, setGenerated] = useState<Activity | null>(null);
+
+  // ── Persist provider config in localStorage ────────────────────────────────
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("rk_ai_config");
+      if (saved) {
+        const { provider: p, apiKey: k } = JSON.parse(saved) as { provider?: string; apiKey?: string };
+        const validProvider = PROVIDERS.find((pr) => pr.id === p);
+        if (validProvider) setProvider(validProvider.id);
+        if (k) setApiKey(k);
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("rk_ai_config", JSON.stringify({ provider, apiKey }));
+    } catch {
+      // ignore storage errors
+    }
+  }, [provider, apiKey]);
 
   // ── Generate ──────────────────────────────────────────────────────────────
 
@@ -70,7 +140,7 @@ export default function GenerateActivityPage() {
       const res = await fetch("/api/activities/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description, objectives, gradeLevel, numSlides, style }),
+        body: JSON.stringify({ description, objectives, gradeLevel, numSlides, style, provider, apiKey }),
       });
 
       const data = await res.json();
@@ -124,6 +194,10 @@ export default function GenerateActivityPage() {
             gradeLevel={gradeLevel} setGradeLevel={setGradeLevel}
             numSlides={numSlides} setNumSlides={setNumSlides}
             style={style} setStyle={setStyle}
+            provider={provider} setProvider={setProvider}
+            apiKey={apiKey} setApiKey={setApiKey}
+            showKey={showKey} setShowKey={setShowKey}
+            showProviderConfig={showProviderConfig} setShowProviderConfig={setShowProviderConfig}
             error={error}
             onGenerate={handleGenerate}
           />
@@ -147,6 +221,10 @@ function FormPhase({
   gradeLevel, setGradeLevel,
   numSlides, setNumSlides,
   style, setStyle,
+  provider, setProvider,
+  apiKey, setApiKey,
+  showKey, setShowKey,
+  showProviderConfig, setShowProviderConfig,
   error, onGenerate,
 }: {
   description: string; setDescription: (v: string) => void;
@@ -154,9 +232,16 @@ function FormPhase({
   gradeLevel: string; setGradeLevel: (v: string) => void;
   numSlides: number; setNumSlides: (v: number) => void;
   style: string; setStyle: (v: string) => void;
+  provider: ProviderId; setProvider: (v: ProviderId) => void;
+  apiKey: string; setApiKey: (v: string) => void;
+  showKey: boolean; setShowKey: (v: boolean) => void;
+  showProviderConfig: boolean; setShowProviderConfig: (v: boolean) => void;
   error: string | null;
   onGenerate: () => void;
 }) {
+  const activeProvider = PROVIDERS.find((p) => p.id === provider)!;
+  const needsKey = provider !== "anthropic" && !apiKey.trim();
+
   return (
     <div className="flex flex-col gap-6">
       {/* Intro */}
@@ -271,6 +356,134 @@ function FormPhase({
         {STYLES.find((s) => s.value === style)?.desc}
       </p>
 
+      {/* ── AI Provider config ────────────────────────────────────────────── */}
+      <div
+        className="rounded-xl border overflow-hidden"
+        style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-white)" }}
+      >
+        {/* Collapsible header */}
+        <button
+          type="button"
+          onClick={() => setShowProviderConfig(!showProviderConfig)}
+          className="w-full flex items-center justify-between px-4 py-3 text-sm font-semibold transition-colors"
+          style={{ color: "var(--color-ink)" }}
+        >
+          <div className="flex items-center gap-2">
+            <KeyRound size={15} style={{ color: "var(--color-muted)" }} />
+            <span>AI Provider</span>
+            <span
+              className="text-xs font-medium px-2 py-0.5 rounded-full"
+              style={{ backgroundColor: "rgba(27,120,136,0.1)", color: "var(--color-brand-teal)" }}
+            >
+              {activeProvider.name}
+            </span>
+          </div>
+          <ChevronDown
+            size={16}
+            style={{
+              color: "var(--color-muted)",
+              transform: showProviderConfig ? "rotate(180deg)" : "rotate(0deg)",
+              transition: "transform 0.2s",
+            }}
+          />
+        </button>
+
+        {/* Expanded panel */}
+        {showProviderConfig && (
+          <div
+            className="px-4 pb-4 flex flex-col gap-4 border-t"
+            style={{ borderColor: "var(--color-border)" }}
+          >
+            <p className="text-xs pt-3" style={{ color: "var(--color-muted)" }}>
+              Bring your own API key. Your key is stored only in this browser and sent to our server solely to make this request.
+            </p>
+
+            {/* Provider selector */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-muted)" }}>
+                Provider
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {PROVIDERS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setProvider(p.id)}
+                    className="flex flex-col items-start px-3 py-2.5 rounded-lg border text-left transition-all"
+                    style={{
+                      borderColor: provider === p.id ? "var(--color-brand-teal)" : "var(--color-border)",
+                      backgroundColor: provider === p.id ? "rgba(27,120,136,0.06)" : "var(--color-surface)",
+                      color: "var(--color-ink)",
+                    }}
+                  >
+                    <span className="text-xs font-semibold">{p.name}</span>
+                    <span className="text-xs mt-0.5" style={{ color: "var(--color-muted)" }}>{p.model}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* API key input */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--color-muted)" }}>
+                  API Key
+                </label>
+                <a
+                  href={activeProvider.docsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-xs font-medium"
+                  style={{ color: "var(--color-brand-teal)" }}
+                >
+                  Get your key <ExternalLink size={11} />
+                </a>
+              </div>
+              <div className="relative">
+                <input
+                  type={showKey ? "text" : "password"}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={activeProvider.keyPlaceholder}
+                  className="w-full rounded-lg border px-3 py-2 pr-10 text-sm outline-none font-mono"
+                  style={{
+                    borderColor: "var(--color-border)",
+                    color: "var(--color-ink)",
+                    backgroundColor: "var(--color-surface)",
+                  }}
+                  onFocus={(e) => (e.currentTarget.style.borderColor = "var(--color-brand-teal)")}
+                  onBlur={(e) => (e.currentTarget.style.borderColor = "var(--color-border)")}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowKey(!showKey)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2"
+                  style={{ color: "var(--color-muted)" }}
+                  tabIndex={-1}
+                >
+                  {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+              <p className="text-xs" style={{ color: "var(--color-subtle)" }}>
+                {activeProvider.keyHint}
+              </p>
+            </div>
+
+            {/* Warning if non-Anthropic provider has no key */}
+            {needsKey && (
+              <div
+                className="rounded-lg px-3 py-2 text-xs"
+                style={{ backgroundColor: "rgba(246,165,0,0.1)", color: "#b45309" }}
+              >
+                An API key is required to use {activeProvider.name}. Paste it above.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Error */}
       {error && (
         <div className="rounded-xl p-3 text-sm" style={{ backgroundColor: "rgba(246,94,93,0.08)", color: "var(--color-brand-coral)" }}>
@@ -281,7 +494,7 @@ function FormPhase({
       {/* Submit */}
       <button
         onClick={onGenerate}
-        disabled={!description.trim()}
+        disabled={!description.trim() || needsKey}
         className="flex items-center justify-center gap-2 py-3 px-6 rounded-xl font-semibold text-sm transition-opacity disabled:opacity-40"
         style={{ backgroundColor: "var(--color-brand-teal)", color: "white", fontFamily: "var(--font-body)" }}
       >

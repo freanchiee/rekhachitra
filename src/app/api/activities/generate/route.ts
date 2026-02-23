@@ -127,6 +127,98 @@ Follow the pedagogical pattern. Make sure at least half the slides have a Desmos
 Return ONLY valid JSON matching the schema above.`;
 }
 
+// ── Provider-specific AI callers ──────────────────────────────────────────────
+
+async function callAnthropic(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const client = new Anthropic({ apiKey });
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 8000,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+  });
+  return (message.content[0] as { text: string }).text;
+}
+
+async function callGemini(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      system_instruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ parts: [{ text: userPrompt }] }],
+      generationConfig: { maxOutputTokens: 8000 },
+    }),
+  });
+  const data = await res.json() as {
+    error?: { message?: string };
+    candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
+  };
+  if (!res.ok) throw new Error(data.error?.message ?? "Gemini API error");
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) throw new Error("Gemini returned an empty response");
+  return text;
+}
+
+async function callDeepSeek(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "deepseek-chat",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      max_tokens: 8000,
+    }),
+  });
+  const data = await res.json() as {
+    error?: { message?: string };
+    choices?: Array<{ message: { content: string } }>;
+  };
+  if (!res.ok) throw new Error(data.error?.message ?? "DeepSeek API error");
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) throw new Error("DeepSeek returned an empty response");
+  return text;
+}
+
+async function callMinimax(apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  const res = await fetch("https://api.minimaxi.chat/v1/text/chatcompletion_v2", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: "MiniMax-Text-01",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      max_tokens: 8000,
+    }),
+  });
+  const data = await res.json() as {
+    base_resp?: { status_code?: number; status_msg?: string };
+    choices?: Array<{ message: { content: string } }>;
+  };
+  if (!res.ok || (data.base_resp?.status_code && data.base_resp.status_code !== 0)) {
+    throw new Error(data.base_resp?.status_msg ?? "Minimax API error");
+  }
+  const text = data.choices?.[0]?.message?.content;
+  if (!text) throw new Error("Minimax returned an empty response");
+  return text;
+}
+
+async function callAI(provider: string, apiKey: string, systemPrompt: string, userPrompt: string): Promise<string> {
+  switch (provider) {
+    case "anthropic": return callAnthropic(apiKey, systemPrompt, userPrompt);
+    case "gemini":    return callGemini(apiKey, systemPrompt, userPrompt);
+    case "deepseek":  return callDeepSeek(apiKey, systemPrompt, userPrompt);
+    case "minimax":   return callMinimax(apiKey, systemPrompt, userPrompt);
+    default: throw new Error(`Unknown provider: ${provider}`);
+  }
+}
+
 // ── Slide mapper ──────────────────────────────────────────────────────────────
 
 interface RawSlide {
@@ -188,32 +280,33 @@ function mapSlide(raw: RawSlide, index: number, activityId: string): Slide {
 
 export async function POST(req: Request) {
   try {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      return Response.json(
-        { error: "ANTHROPIC_API_KEY is not set. Add it to your .env.local file." },
-        { status: 500 }
-      );
-    }
-
     const body = await req.json();
+    const { description, objectives, gradeLevel, numSlides, style, provider = "anthropic", apiKey } = body as {
+      description: string;
+      objectives: string;
+      gradeLevel: string;
+      numSlides: number;
+      style: string;
+      provider?: string;
+      apiKey?: string;
+    };
 
-    if (!body.description?.trim()) {
+    if (!description?.trim()) {
       return Response.json({ error: "description is required" }, { status: 400 });
     }
 
-    const client = new Anthropic({ apiKey });
+    // Resolve key: use provided key, or fall back to env var for Anthropic
+    const resolvedKey = apiKey?.trim() || (provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : undefined);
+    if (!resolvedKey) {
+      return Response.json(
+        { error: `No API key provided for ${provider}. Open "AI Provider" settings and paste your key.` },
+        { status: 400 }
+      );
+    }
 
-    const message = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: buildUserPrompt(body) }],
-    });
+    const raw = await callAI(provider, resolvedKey, SYSTEM_PROMPT, buildUserPrompt({ description, objectives, gradeLevel, numSlides, style }));
 
-    const raw = (message.content[0] as { text: string }).text;
-
-    // Extract the JSON object from the response (Claude sometimes adds a tiny preamble)
+    // Extract the JSON object from the response (some models add a tiny preamble)
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return Response.json({ error: "AI returned an unexpected format. Please try again." }, { status: 500 });
@@ -240,7 +333,7 @@ export async function POST(req: Request) {
 
     return Response.json({ activity });
   } catch (err) {
-    console.error("[generate activity]", err);
+    console.error("[generate activity]", err instanceof Error ? err.message : err);
     const message = err instanceof Error ? err.message : "Unknown error";
     return Response.json({ error: message }, { status: 500 });
   }
