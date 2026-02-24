@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { type Activity, type Session, type SessionStatus, type Slide, type StudentSession, type Response } from "@/types";
+import { type Activity, type Session, type SessionStatus, type Slide, type StudentSession, type Response, type ContentBlock } from "@/types";
 import { generateJoinCode, generateId } from "@/lib/utils/session";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,6 +177,12 @@ interface BuilderStore {
   markSaved: () => void;
   setPendingActivity: (activity: Activity) => void;
   clearPendingActivity: () => void;
+
+  // Content block actions
+  addBlock: (slideIndex: number, block: ContentBlock) => void;
+  replaceBlock: (slideIndex: number, blockId: string, newBlock: ContentBlock) => void;
+  removeBlock: (slideIndex: number, blockId: string) => void;
+  reorderBlocks: (slideIndex: number, from: number, to: number) => void;
 }
 
 export const useBuilderStore = create<BuilderStore>((set, get) => ({
@@ -264,5 +270,50 @@ export const useBuilderStore = create<BuilderStore>((set, get) => ({
 
   clearPendingActivity: () => {
     set({ pendingActivity: null });
+  },
+
+  addBlock: (slideIndex, block) => {
+    const { activity } = get();
+    if (!activity?.slides) return;
+    const slides = [...activity.slides];
+    const slide = slides[slideIndex];
+    slides[slideIndex] = { ...slide, content: [...(slide.content ?? []), block] };
+    set({ activity: { ...activity, slides }, isDirty: true });
+  },
+
+  replaceBlock: (slideIndex, blockId, newBlock) => {
+    const { activity } = get();
+    if (!activity?.slides) return;
+    const slides = [...activity.slides];
+    const slide = slides[slideIndex];
+    slides[slideIndex] = {
+      ...slide,
+      content: (slide.content ?? []).map((b) => (b.id === blockId ? newBlock : b)),
+    };
+    set({ activity: { ...activity, slides }, isDirty: true });
+  },
+
+  removeBlock: (slideIndex, blockId) => {
+    const { activity } = get();
+    if (!activity?.slides) return;
+    const slides = [...activity.slides];
+    const slide = slides[slideIndex];
+    slides[slideIndex] = {
+      ...slide,
+      content: (slide.content ?? []).filter((b) => b.id !== blockId),
+    };
+    set({ activity: { ...activity, slides }, isDirty: true });
+  },
+
+  reorderBlocks: (slideIndex, from, to) => {
+    const { activity } = get();
+    if (!activity?.slides) return;
+    const slides = [...activity.slides];
+    const slide = slides[slideIndex];
+    const blocks = [...(slide.content ?? [])];
+    const [moved] = blocks.splice(from, 1);
+    blocks.splice(to, 0, moved);
+    slides[slideIndex] = { ...slide, content: blocks };
+    set({ activity: { ...activity, slides }, isDirty: true });
   },
 }));

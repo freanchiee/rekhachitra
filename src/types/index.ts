@@ -47,6 +47,36 @@ export interface GraphState {
   settings: GraphSettings;
 }
 
+// ── Content Blocks ────────────────────────────────────────────────────────────
+
+export interface TextBlock {
+  id: string;
+  type: "text";
+  content: string;
+}
+
+export interface ImageBlock {
+  id: string;
+  type: "image";
+  url: string;
+  caption?: string;
+}
+
+export interface FreeResponseBlock {
+  id: string;
+  type: "free_response";
+  prompt: string;
+  placeholder?: string;
+}
+
+export interface GraphBlock {
+  id: string;
+  type: "graph";
+  desmosState: Record<string, unknown> | null;
+}
+
+export type ContentBlock = TextBlock | ImageBlock | FreeResponseBlock | GraphBlock;
+
 // ── Checkpoint (Question) ─────────────────────────────────────────────────────
 
 export type CheckpointType = "mcq" | "short_answer" | "graph" | "none";
@@ -81,6 +111,8 @@ export interface Slide {
   /** Serialised Desmos calculator state (from calc.getState()). Preferred over graphState. */
   desmosState: Record<string, unknown> | null;
   checkpoint: Checkpoint | null;
+  /** Block-based content (text, image, free_response, graph). Takes precedence over desmosState when present. */
+  content?: ContentBlock[];
   createdAt: string;
 }
 
