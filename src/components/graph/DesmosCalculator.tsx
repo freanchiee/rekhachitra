@@ -52,8 +52,13 @@ const DesmosCalculator = forwardRef<DesmosHandle, Props>(
           border: false,
           images: !readOnly,
           notes: !readOnly,
+          folders: !readOnly,
+          sliders: !readOnly,          // enable "add slider: a b all" prompt
+          links: !readOnly,
+          distributions: !readOnly,
           lockViewport: readOnly,
           administerSecretFolders: false,
+          autosize: true,
         });
 
         if (initialState && Object.keys(initialState).length > 0) {

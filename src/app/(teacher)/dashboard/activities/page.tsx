@@ -1,37 +1,61 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Clock, MoreVertical, Sparkles } from "lucide-react";
+import { Plus, Clock, Sparkles, Layers, Trash2, Edit2 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
-import type { Metadata } from "next";
+import type { Activity } from "@/types";
 
-export const metadata: Metadata = { title: "Activities" };
+const LS_ACTIVITIES_KEY = "rk_activities";
 
-// Placeholder activities — replace with Supabase fetch
-const mockActivities = [
-  {
-    id: "demo-1",
-    title: "Linear Functions Explorer",
-    description: "Students graph y = mx + b and explore slope and intercept.",
-    status: "draft" as const,
-    slideCount: 4,
-    updatedAt: "2025-06-10",
-  },
-  {
-    id: "demo-2",
-    title: "Quadratic Curve Investigation",
-    description: "Discover how a, b, c affect y = ax² + bx + c.",
-    status: "active" as const,
-    slideCount: 6,
-    updatedAt: "2025-06-08",
-  },
-];
-
-const statusVariant = {
-  draft: "neutral" as const,
-  active: "mint" as const,
-  archived: "teal" as const,
+const statusVariant: Record<string, "neutral" | "mint" | "teal"> = {
+  draft: "neutral",
+  active: "mint",
+  archived: "teal",
 };
 
+function formatDate(iso: string) {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  } catch {
+    return iso;
+  }
+}
+
 export default function ActivitiesPage() {
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_ACTIVITIES_KEY);
+      if (raw) {
+        const map: Record<string, Activity> = JSON.parse(raw);
+        // Sort newest first by updatedAt
+        const sorted = Object.values(map).sort(
+          (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+        );
+        setActivities(sorted);
+      }
+    } catch {
+      // ignore parse errors
+    }
+    setLoaded(true);
+  }, []);
+
+  const handleDelete = (id: string) => {
+    try {
+      const raw = localStorage.getItem(LS_ACTIVITIES_KEY);
+      if (!raw) return;
+      const map: Record<string, Activity> = JSON.parse(raw);
+      delete map[id];
+      localStorage.setItem(LS_ACTIVITIES_KEY, JSON.stringify(map));
+      setActivities((prev) => prev.filter((a) => a.id !== id));
+    } catch {
+      // ignore
+    }
+  };
+
   return (
     <div className="p-8 max-w-5xl">
       {/* Header */}
@@ -44,7 +68,13 @@ export default function ActivitiesPage() {
             My Activities
           </h1>
           <p className="text-sm" style={{ color: "var(--color-muted)" }}>
-            {mockActivities.length} activit{mockActivities.length === 1 ? "y" : "ies"}
+            {loaded ? (
+              activities.length === 0
+                ? "No activities yet — create one below"
+                : `${activities.length} activit${activities.length === 1 ? "y" : "ies"} saved locally`
+            ) : (
+              "Loading…"
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -60,10 +90,21 @@ export default function ActivitiesPage() {
       </div>
 
       {/* Activity grid */}
-      {mockActivities.length > 0 ? (
+      {!loaded ? (
+        <div className="flex justify-center py-24">
+          <div
+            className="w-8 h-8 border-2 rounded-full animate-spin"
+            style={{ borderColor: "var(--color-brand-teal)", borderTopColor: "transparent" }}
+          />
+        </div>
+      ) : activities.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {mockActivities.map((activity) => (
-            <ActivityCard key={activity.id} activity={activity} />
+          {activities.map((activity) => (
+            <ActivityCard
+              key={activity.id}
+              activity={activity}
+              onDelete={() => handleDelete(activity.id)}
+            />
           ))}
           {/* Create new card */}
           <Link
@@ -95,13 +136,27 @@ export default function ActivitiesPage() {
             No activities yet
           </h3>
           <p className="text-sm mb-6" style={{ color: "var(--color-muted)" }}>
-            Create your first graph activity to get started.
+            Activities you create or generate with AI will appear here.
+            They&apos;re saved automatically in your browser.
           </p>
-          <Link href="/dashboard/activities/new" className="btn btn-primary">
-            <Plus size={16} />
-            Create activity
-          </Link>
+          <div className="flex items-center justify-center gap-3">
+            <Link href="/dashboard/activities/generate" className="btn btn-outline gap-2">
+              <Sparkles size={16} />
+              Generate with AI
+            </Link>
+            <Link href="/dashboard/activities/new" className="btn btn-primary gap-2">
+              <Plus size={16} />
+              Create activity
+            </Link>
+          </div>
         </div>
+      )}
+
+      {/* Storage notice */}
+      {loaded && activities.length > 0 && (
+        <p className="mt-6 text-xs text-center" style={{ color: "var(--color-subtle)" }}>
+          Activities are saved in your browser&apos;s local storage. They persist across sessions on this device.
+        </p>
       )}
     </div>
   );
@@ -109,20 +164,35 @@ export default function ActivitiesPage() {
 
 function ActivityCard({
   activity,
+  onDelete,
 }: {
-  activity: (typeof mockActivities)[0];
+  activity: Activity;
+  onDelete: () => void;
 }) {
+  const slideCount = activity.slides?.length ?? 0;
+  const blockCount = activity.slides?.reduce(
+    (sum, s) => sum + (s.content?.length ?? 0),
+    0
+  ) ?? 0;
+
   return (
-    <div className="card p-5 flex flex-col gap-3 hover:shadow-brand transition-shadow">
+    <div className="card p-5 flex flex-col gap-3 hover:shadow-brand transition-shadow group">
       <div className="flex items-start justify-between gap-2">
-        <Badge variant={statusVariant[activity.status]}>
+        <Badge variant={statusVariant[activity.status] ?? "neutral"}>
           {activity.status.charAt(0).toUpperCase() + activity.status.slice(1)}
         </Badge>
         <button
-          className="p-1 rounded hover:bg-[var(--color-surface)] transition-colors"
-          aria-label="More options"
+          onClick={(e) => {
+            e.preventDefault();
+            if (confirm("Delete this activity? This cannot be undone.")) {
+              onDelete();
+            }
+          }}
+          className="p-1 rounded hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+          aria-label="Delete activity"
+          title="Delete activity"
         >
-          <MoreVertical size={16} style={{ color: "var(--color-muted)" }} />
+          <Trash2 size={15} style={{ color: "var(--color-brand-coral)" }} />
         </button>
       </div>
 
@@ -131,34 +201,40 @@ function ActivityCard({
           className="font-bold mb-1 line-clamp-2"
           style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}
         >
-          {activity.title}
+          {activity.title || "Untitled Activity"}
         </h3>
-        <p
-          className="text-sm line-clamp-2"
-          style={{ color: "var(--color-muted)" }}
-        >
-          {activity.description}
-        </p>
+        {activity.description && (
+          <p className="text-sm line-clamp-2" style={{ color: "var(--color-muted)" }}>
+            {activity.description}
+          </p>
+        )}
       </div>
 
       <div className="flex items-center gap-4 text-xs" style={{ color: "var(--color-subtle)" }}>
-        <span>{activity.slideCount} slides</span>
         <span className="flex items-center gap-1">
+          <Layers size={11} />
+          {slideCount} slide{slideCount !== 1 ? "s" : ""}
+        </span>
+        {blockCount > 0 && (
+          <span>{blockCount} block{blockCount !== 1 ? "s" : ""}</span>
+        )}
+        <span className="flex items-center gap-1 ml-auto">
           <Clock size={11} />
-          {activity.updatedAt}
+          {formatDate(activity.updatedAt)}
         </span>
       </div>
 
       <div className="flex gap-2 pt-1">
         <Link
-          href={`/dashboard/activities/${activity.id}`}
-          className="btn btn-outline btn-sm flex-1 text-center"
+          href={`/dashboard/activities/new?id=${activity.id}`}
+          className="btn btn-outline btn-sm flex-1 text-center gap-1.5"
         >
+          <Edit2 size={13} />
           Edit
         </Link>
         <Link
-          href={`/dashboard/activities/${activity.id}?launch=1`}
-          className="btn btn-primary btn-sm flex-1 text-center"
+          href={`/dashboard/sessions?activity=${activity.id}`}
+          className="btn btn-primary btn-sm flex-1 text-center gap-1.5"
         >
           Launch
         </Link>

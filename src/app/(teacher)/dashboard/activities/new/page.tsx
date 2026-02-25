@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, ChevronLeft, ChevronRight, Plus, Trash2, Play, Save,
@@ -18,6 +19,8 @@ import { cn } from "@/lib/utils/cn";
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const LS_AUTOSAVE_KEY = "rk_autosave_draft";
+/** Map of { [activityId]: Activity } kept in localStorage for the activities list page. */
+export const LS_ACTIVITIES_KEY = "rk_activities";
 
 const SEED_ACTIVITY: Activity = {
   id: generateId(),
@@ -75,7 +78,20 @@ function migrateActivity(activity: Activity): Activity {
 
 // ── Page ──────────────────────────────────────────────────────────────────
 
-export default function NewActivityPage() {
+export default function NewActivityPageWrapper() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="w-8 h-8 border-2 rounded-full animate-spin"
+          style={{ borderColor: "var(--color-brand-teal)", borderTopColor: "transparent" }} />
+      </div>
+    }>
+      <NewActivityPage />
+    </Suspense>
+  );
+}
+
+function NewActivityPage() {
   const {
     activity,
     activeSlideIndex,
@@ -95,6 +111,7 @@ export default function NewActivityPage() {
     markSaved,
   } = useBuilderStore();
 
+  const searchParams = useSearchParams();
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [autosaveStatus, setAutosaveStatus] = useState<"idle" | "pending" | "saved">("idle");
@@ -105,24 +122,41 @@ export default function NewActivityPage() {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Mount: load pending activity or autosave ───────────────────────────
+  // ── Mount: load pending activity, specific id, autosave, or seed ──────
   useEffect(() => {
     if (pendingActivity) {
       setActivity(migrateActivity(pendingActivity));
       clearPendingActivity();
-    } else {
+      return;
+    }
+    // Load a specific activity by ?id= param (from activities list "Edit")
+    const idParam = searchParams.get("id");
+    if (idParam) {
+      try {
+        const raw = localStorage.getItem(LS_ACTIVITIES_KEY);
+        const map: Record<string, Activity> = raw ? JSON.parse(raw) : {};
+        if (map[idParam]) {
+          setActivity(migrateActivity(map[idParam]));
+          return;
+        }
+      } catch {
+        // fall through
+      }
+    }
+    // Restore last autosave (only when no id param)
+    if (!idParam) {
       const saved = localStorage.getItem(LS_AUTOSAVE_KEY);
       if (saved) {
         try {
           const parsed = JSON.parse(saved) as Activity;
           setActivity(migrateActivity(parsed));
+          return;
         } catch {
-          setActivity(SEED_ACTIVITY);
+          // fall through
         }
-      } else {
-        setActivity(SEED_ACTIVITY);
       }
     }
+    setActivity(SEED_ACTIVITY);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -133,7 +167,14 @@ export default function NewActivityPage() {
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     autosaveTimer.current = setTimeout(() => {
       try {
-        localStorage.setItem(LS_AUTOSAVE_KEY, JSON.stringify(activity));
+        const stamped = { ...activity, updatedAt: new Date().toISOString() };
+        // Write current draft
+        localStorage.setItem(LS_AUTOSAVE_KEY, JSON.stringify(stamped));
+        // Also upsert into the activities map
+        const raw = localStorage.getItem(LS_ACTIVITIES_KEY);
+        const map: Record<string, Activity> = raw ? JSON.parse(raw) : {};
+        map[stamped.id] = stamped;
+        localStorage.setItem(LS_ACTIVITIES_KEY, JSON.stringify(map));
         setLastSaved(new Date());
         setAutosaveStatus("saved");
         markSaved();
@@ -155,7 +196,12 @@ export default function NewActivityPage() {
     if (!activity) return;
     setSaving(true);
     try {
-      localStorage.setItem(LS_AUTOSAVE_KEY, JSON.stringify(activity));
+      const stamped = { ...activity, updatedAt: new Date().toISOString() };
+      localStorage.setItem(LS_AUTOSAVE_KEY, JSON.stringify(stamped));
+      const raw = localStorage.getItem(LS_ACTIVITIES_KEY);
+      const map: Record<string, Activity> = raw ? JSON.parse(raw) : {};
+      map[stamped.id] = stamped;
+      localStorage.setItem(LS_ACTIVITIES_KEY, JSON.stringify(map));
       setLastSaved(new Date());
       setAutosaveStatus("saved");
       markSaved();
