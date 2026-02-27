@@ -9,6 +9,31 @@ import { generateJoinCode, generateId } from "@/lib/utils/session";
 // Manages the teacher's live session state (local-first, later Supabase sync)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** localStorage key prefix for live sessions — students read from this */
+export const LS_LIVE_SESSION_PREFIX = "rk_live_session_";
+
+function writeLiveSession(session: Session, activity: Activity) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(
+      `${LS_LIVE_SESSION_PREFIX}${session.joinCode.toLowerCase()}`,
+      JSON.stringify({ session, activity })
+    );
+  } catch { /* quota exceeded */ }
+}
+
+function patchLiveSession(joinCode: string, patch: Partial<Session>) {
+  if (typeof window === "undefined") return;
+  try {
+    const key = `${LS_LIVE_SESSION_PREFIX}${joinCode.toLowerCase()}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const data = JSON.parse(raw) as { session: Session; activity: Activity };
+    data.session = { ...data.session, ...patch };
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch { /* quota exceeded */ }
+}
+
 interface TeacherSessionStore {
   session: Session | null;
   activity: Activity | null;
@@ -42,46 +67,49 @@ export const useTeacherSessionStore = create<TeacherSessionStore>((set, get) => 
       joinCode: generateJoinCode(),
       status: "waiting",
       currentSlide: 0,
-      startedAt: null,
+      startedAt: new Date().toISOString(),
       endedAt: null,
       createdAt: new Date().toISOString(),
       activity,
     };
     set({ session, activity, students: [], responses: [] });
+    // Publish to localStorage so students can read it by join code
+    writeLiveSession(session, activity);
     return session;
   },
 
   endSession: () => {
-    set((state) => ({
-      session: state.session
-        ? { ...state.session, status: "ended", endedAt: new Date().toISOString() }
-        : null,
-    }));
+    const { session } = get();
+    const ended = session
+      ? { ...session, status: "ended" as const, endedAt: new Date().toISOString() }
+      : null;
+    set({ session: ended });
+    if (ended) patchLiveSession(ended.joinCode, { status: "ended", endedAt: ended.endedAt });
   },
 
   advanceSlide: (direction) => {
     const { session, activity } = get();
     if (!session || !activity?.slides) return;
-    const slides = activity.slides;
     const next = session.currentSlide + direction;
-    if (next < 0 || next >= slides.length) return;
-    set((state) => ({
-      session: state.session ? { ...state.session, currentSlide: next, status: "active" } : null,
-    }));
+    if (next < 0 || next >= activity.slides.length) return;
+    const updated = { ...session, currentSlide: next, status: "active" as const };
+    set({ session: updated });
+    patchLiveSession(session.joinCode, { currentSlide: next, status: "active" });
   },
 
   goToSlide: (index) => {
-    const { activity } = get();
-    if (!activity?.slides || index < 0 || index >= activity.slides.length) return;
-    set((state) => ({
-      session: state.session ? { ...state.session, currentSlide: index, status: "active" } : null,
-    }));
+    const { session, activity } = get();
+    if (!session || !activity?.slides || index < 0 || index >= activity.slides.length) return;
+    const updated = { ...session, currentSlide: index, status: "active" as const };
+    set({ session: updated });
+    patchLiveSession(session.joinCode, { currentSlide: index, status: "active" });
   },
 
   updateStatus: (status) => {
-    set((state) => ({
-      session: state.session ? { ...state.session, status } : null,
-    }));
+    const { session } = get();
+    if (!session) return;
+    set({ session: { ...session, status } });
+    patchLiveSession(session.joinCode, { status });
   },
 
   addStudent: (student) => {
