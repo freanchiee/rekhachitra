@@ -120,9 +120,16 @@ function SessionsPage() {
   const isDemo = activityToLaunch.id === DEMO_ACTIVITY.id;
 
   const handleStart = useCallback(() => {
-    startSession(activityToLaunch);
+    const newSession = startSession(activityToLaunch);
+    // Belt-and-suspenders: also write directly here in case the store's
+    // writeLiveSession runs in a context where localStorage isn't available.
+    try {
+      localStorage.setItem(
+        `rk_live_session_${newSession.joinCode.toLowerCase()}`,
+        JSON.stringify({ session: { ...newSession, status: "active" }, activity: activityToLaunch })
+      );
+    } catch { /* storage quota */ }
     if (isDemo) {
-      // Inject demo students only for the demo activity
       DEMO_STUDENTS.forEach((st) => useTeacherSessionStore.getState().addStudent(st));
     }
   }, [activityToLaunch, isDemo, startSession]);

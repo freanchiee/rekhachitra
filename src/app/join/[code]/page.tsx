@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, use, useEffect } from "react";
-import { ArrowRight, CheckCircle, XCircle, Clock, WifiOff, Image as ImageIcon } from "lucide-react";
+import { ArrowRight, CheckCircle, XCircle, Clock, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import DesmosCalculator from "@/components/graph/DesmosCalculator";
@@ -50,6 +50,7 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
     if (raw) {
       try {
         setLiveSession(JSON.parse(raw));
+        setLoadError(false);
       } catch {
         setLoadError(true);
       }
@@ -59,7 +60,24 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
     setLoaded(true);
   }, [code]);
 
-  // ── Listen for slide advances from teacher (storage event = cross-tab) ───
+  // ── Poll every 2 s when session not found yet (teacher may not have launched) ──
+  useEffect(() => {
+    if (!loaded || liveSession) return; // only poll when no session found
+    const lsKey = `${LS_LIVE_SESSION_PREFIX}${code.toLowerCase()}`;
+    const interval = setInterval(() => {
+      const raw = localStorage.getItem(lsKey);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as { session: Session; activity: Activity };
+          setLiveSession(parsed);
+          setLoadError(false);
+        } catch { /* ignore */ }
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [code, loaded, liveSession]);
+
+  // ── Listen for slide advances / session updates from teacher (cross-tab) ─
   useEffect(() => {
     const lsKey = `${LS_LIVE_SESSION_PREFIX}${code.toLowerCase()}`;
     const handleStorage = (e: StorageEvent) => {
@@ -67,7 +85,7 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
       try {
         const updated = JSON.parse(e.newValue) as { session: Session; activity: Activity };
         setLiveSession(updated);
-        // If session ended, show the end screen
+        setLoadError(false); // clear error if session arrives after page load
         if (updated.session.status === "ended") {
           setStep("ended");
         }
@@ -143,19 +161,36 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
     );
   }
 
-  if (loadError || !liveSession) {
+  if (!liveSession) {
+    // Still polling — show a friendly "waiting for teacher" screen
     return (
-      <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: "var(--color-surface)" }}>
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: "var(--color-brand-teal)" }}>
         <div className="text-center max-w-sm">
-          <WifiOff size={40} className="mx-auto mb-4" style={{ color: "var(--color-muted)" }} />
-          <h2 className="text-xl font-bold mb-2" style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}>
-            Session not found
-          </h2>
-          <p className="text-sm mb-2" style={{ color: "var(--color-muted)" }}>
-            No live session found for code <span className="font-bold tracking-wider" style={{ color: "var(--color-brand-teal)" }}>{code.slice(0,3)}-{code.slice(3)}</span>.
+          <div
+            className="w-20 h-20 rounded-2xl flex items-center justify-center text-white text-4xl font-bold mx-auto mb-6"
+            style={{ backgroundColor: "rgba(255,255,255,0.15)", fontFamily: "var(--font-heading)" }}
+          >
+            R
+          </div>
+          <p
+            className="text-3xl font-bold tracking-[0.2em] mb-2"
+            style={{ color: "white", fontFamily: "var(--font-heading)" }}
+          >
+            {code.slice(0, 3)}-{code.slice(3)}
           </p>
-          <p className="text-xs" style={{ color: "var(--color-subtle)" }}>
-            Make sure the teacher has launched the session on this device, or ask for the correct code.
+          <h2 className="text-xl font-bold mb-2 text-white" style={{ fontFamily: "var(--font-heading)" }}>
+            Waiting for teacher…
+          </h2>
+          <p className="text-sm text-white/70 mb-6">
+            The session will start automatically once the teacher launches it.
+          </p>
+          <div className="flex items-center justify-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-white/60 animate-bounce [animation-delay:0ms]" />
+            <div className="w-2 h-2 rounded-full bg-white/60 animate-bounce [animation-delay:150ms]" />
+            <div className="w-2 h-2 rounded-full bg-white/60 animate-bounce [animation-delay:300ms]" />
+          </div>
+          <p className="text-xs text-white/40 mt-6">
+            Checking for session every 2 seconds…
           </p>
         </div>
       </div>
