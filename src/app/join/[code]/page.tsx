@@ -23,7 +23,7 @@ const OPTION_COLORS = [
 
 type StudentStep = "join" | "playing" | "answered" | "ended";
 
-// ── Student progress written to localStorage for teacher dashboard ────────────
+// ── Student progress shape ────────────────────────────────────────────────────
 
 interface StudentProgressData {
   id: string;
@@ -37,20 +37,44 @@ interface StudentProgressData {
   lastSeen: string;
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Strip dashes and lowercase — matches the API route normalisation
+function normCode(code: string) {
+  return code.replace(/-/g, "").toLowerCase();
+}
+
+// Load session: try API first (cross-device), fall back to localStorage (same-device)
+async function fetchSession(code: string): Promise<{ session: Session; activity: Activity } | null> {
+  // 1. API
+  try {
+    const res = await fetch(`/api/live/${normCode(code)}`);
+    if (res.ok) {
+      const data = await res.json() as { session?: Session; activity?: Activity };
+      if (data.session && data.activity) return { session: data.session, activity: data.activity };
+    }
+  } catch { /* try localStorage */ }
+  // 2. localStorage (same-browser / same-device)
+  try {
+    const raw = localStorage.getItem(`${LS_LIVE_SESSION_PREFIX}${normCode(code)}`);
+    if (raw) return JSON.parse(raw) as { session: Session; activity: Activity };
+  } catch { /* ignore */ }
+  return null;
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function StudentJoinPage({ params }: { params: Promise<{ code: string }> }) {
   const { code } = use(params);
   const { studentSession, joinSession } = useStudentSessionStore();
 
-  // Live session data read from localStorage (written by teacher's store)
   const [liveSession, setLiveSession] = useState<{ session: Session; activity: Activity } | null>(null);
   const [loaded, setLoaded] = useState(false);
 
-  // Student's own navigation (self-paced)
+  // Student's own slide position (self-paced)
   const [mySlide, setMySlide] = useState(0);
 
-  // Per-slide answer state (keyed by slideId to survive slide changes)
+  // Per-slide answer state
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({});
   const [shortAnswers, setShortAnswers] = useState<Record<string, string>>({});
   const [feedbacks, setFeedbacks] = useState<Record<string, "correct" | "incorrect">>({});
@@ -61,39 +85,79 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
   const [nameError, setNameError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Student ID and progress key (set once on join)
   const studentIdRef = useRef<string>("");
-  const progressKeyRef = useRef<string>("");
   const scoreRef = useRef(0);
   const joinedAtRef = useRef<string>("");
 
-  // ── Load session from localStorage on mount ──────────────────────────────
-  useEffect(() => {
-    const lsKey = `${LS_LIVE_SESSION_PREFIX}${code.toLowerCase()}`;
-    const raw = localStorage.getItem(lsKey);
-    if (raw) {
-      try { setLiveSession(JSON.parse(raw)); } catch { /* ignore */ }
-    }
-    setLoaded(true);
+  // ── Write student progress to both API and localStorage ──────────────────
+  const writeProgress = useCallback((data: StudentProgressData) => {
+    // localStorage (same-device)
+    try {
+      localStorage.setItem(
+        `${LS_STUDENT_PREFIX}${normCode(code)}_${data.id}`,
+        JSON.stringify(data)
+      );
+    } catch { /* quota */ }
+    // API relay (cross-device)
+    fetch(`/api/live/${normCode(code)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ student: data }),
+    }).catch(() => { /* fire-and-forget */ });
   }, [code]);
 
-  // ── Poll every 2 s when session not found yet ────────────────────────────
+  // ── Build current full progress object ────────────────────────────────────
+  const buildProgress = useCallback((
+    patch: Partial<Pick<StudentProgressData, "currentSlide" | "answers" | "score">>
+  ): StudentProgressData => {
+    const key = `${LS_STUDENT_PREFIX}${normCode(code)}_${studentIdRef.current}`;
+    let current: StudentProgressData | null = null;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) current = JSON.parse(raw) as StudentProgressData;
+    } catch { /* ignore */ }
+    return {
+      id: studentIdRef.current,
+      name: studentSession?.displayName ?? displayName,
+      avatarSeed: studentSession?.avatarSeed ?? displayName,
+      currentSlide: patch.currentSlide ?? current?.currentSlide ?? 0,
+      totalSlides: (liveSession?.activity?.slides?.length ?? 0),
+      answers: patch.answers ?? current?.answers ?? {},
+      score: patch.score ?? current?.score ?? 0,
+      joinedAt: joinedAtRef.current,
+      lastSeen: new Date().toISOString(),
+    };
+  }, [code, studentSession, displayName, liveSession]);
+
+  // ── Initial session load ──────────────────────────────────────────────────
   useEffect(() => {
-    if (!loaded || liveSession) return;
-    const lsKey = `${LS_LIVE_SESSION_PREFIX}${code.toLowerCase()}`;
-    const interval = setInterval(() => {
-      const raw = localStorage.getItem(lsKey);
-      if (raw) {
-        try { setLiveSession(JSON.parse(raw)); } catch { /* ignore */ }
+    fetchSession(code).then((s) => {
+      if (s) setLiveSession(s);
+      setLoaded(true);
+    });
+  }, [code]);
+
+  // ── Poll every 2 s until session found, then every 3 s while playing ─────
+  useEffect(() => {
+    if (!loaded) return;
+
+    const poll = async () => {
+      const s = await fetchSession(code);
+      if (s) {
+        setLiveSession(s);
+        if (s.session.status === "ended") setStep("ended");
       }
-    }, 2000);
+    };
+
+    // Fast poll until session found; slow poll after
+    const interval = setInterval(poll, liveSession ? 3000 : 2000);
     return () => clearInterval(interval);
   }, [code, loaded, liveSession]);
 
-  // ── Listen for session end from teacher ──────────────────────────────────
+  // ── Storage events (same-browser cross-tab) ───────────────────────────────
   useEffect(() => {
-    const lsKey = `${LS_LIVE_SESSION_PREFIX}${code.toLowerCase()}`;
-    const handleStorage = (e: StorageEvent) => {
+    const lsKey = `${LS_LIVE_SESSION_PREFIX}${normCode(code)}`;
+    const handle = (e: StorageEvent) => {
       if (e.key !== lsKey || !e.newValue) return;
       try {
         const updated = JSON.parse(e.newValue) as { session: Session; activity: Activity };
@@ -101,20 +165,9 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
         if (updated.session.status === "ended") setStep("ended");
       } catch { /* ignore */ }
     };
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
+    window.addEventListener("storage", handle);
+    return () => window.removeEventListener("storage", handle);
   }, [code]);
-
-  // ── Write student progress to localStorage ───────────────────────────────
-  const writeProgress = useCallback((patch: Partial<StudentProgressData>) => {
-    const key = progressKeyRef.current;
-    if (!key) return;
-    try {
-      const raw = localStorage.getItem(key);
-      const current: StudentProgressData = raw ? JSON.parse(raw) : {};
-      localStorage.setItem(key, JSON.stringify({ ...current, ...patch, lastSeen: new Date().toISOString() }));
-    } catch { /* quota */ }
-  }, []);
 
   // ── Derived state ─────────────────────────────────────────────────────────
   const activity = liveSession?.activity ?? null;
@@ -126,33 +179,28 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
   const shortAnswer = shortAnswers[slideId] ?? "";
   const feedback = feedbacks[slideId] ?? null;
 
-  // ── Handlers ──────────────────────────────────────────────────────────────
+  // ── Join handler ──────────────────────────────────────────────────────────
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = displayName.trim();
     if (name.length < 2) { setNameError("Name must be at least 2 characters"); return; }
+    if (!liveSession) return;
     setLoading(true);
     setNameError("");
-    await new Promise((r) => setTimeout(r, 400));
-
-    if (!liveSession) { setLoading(false); return; }
+    await new Promise((r) => setTimeout(r, 300));
 
     const studentId = generateId();
-    const avatarSeed = name + liveSession.session.id;
     const now = new Date().toISOString();
-
     studentIdRef.current = studentId;
-    progressKeyRef.current = `${LS_STUDENT_PREFIX}${code.toLowerCase()}_${studentId}`;
     scoreRef.current = 0;
     joinedAtRef.current = now;
 
     joinSession(liveSession.session, name);
 
-    // Write initial progress so teacher sees student immediately
-    const initialProgress: StudentProgressData = {
+    const initial: StudentProgressData = {
       id: studentId,
       name,
-      avatarSeed,
+      avatarSeed: name + liveSession.session.id,
       currentSlide: 0,
       totalSlides: slides.length,
       answers: {},
@@ -160,20 +208,22 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
       joinedAt: now,
       lastSeen: now,
     };
-    try {
-      localStorage.setItem(progressKeyRef.current, JSON.stringify(initialProgress));
-    } catch { /* quota */ }
+    writeProgress(initial);
 
     setLoading(false);
     setStep("playing");
   };
 
+  // ── Slide navigation ──────────────────────────────────────────────────────
   const handleSlideChange = useCallback((newSlide: number) => {
     setMySlide(newSlide);
     setStep("playing");
-    writeProgress({ currentSlide: newSlide });
-  }, [writeProgress]);
+    if (studentIdRef.current) {
+      writeProgress(buildProgress({ currentSlide: newSlide }));
+    }
+  }, [writeProgress, buildProgress]);
 
+  // ── MCQ answer ────────────────────────────────────────────────────────────
   const handleSubmitMCQ = (optionId: string) => {
     if (isAnswered) return;
     const cp = slide?.checkpoint;
@@ -181,57 +231,60 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
 
     const opt = cp.options.find((o) => o.id === optionId);
     const isCorrect = opt?.isCorrect ?? false;
-    const newFeedback = isCorrect ? "correct" : "incorrect";
     const newScore = isCorrect ? scoreRef.current + (cp.points ?? 10) : scoreRef.current;
     scoreRef.current = newScore;
 
     setSelectedOptions((prev) => ({ ...prev, [slideId]: optionId }));
-    setFeedbacks((prev) => ({ ...prev, [slideId]: newFeedback }));
+    setFeedbacks((prev) => ({ ...prev, [slideId]: isCorrect ? "correct" : "incorrect" }));
     setAnsweredSlides((prev) => new Set(prev).add(slideId));
     setStep("answered");
 
-    writeProgress({
-      answers: {
-        ...getAnswers(),
-        [slideId]: { type: "mcq", value: opt?.text ?? optionId, correct: isCorrect },
-      },
+    // Build updated answers map
+    let existingAnswers: Record<string, { type: string; value: string; correct?: boolean }> = {};
+    try {
+      const raw = localStorage.getItem(`${LS_STUDENT_PREFIX}${normCode(code)}_${studentIdRef.current}`);
+      if (raw) existingAnswers = (JSON.parse(raw) as StudentProgressData).answers ?? {};
+    } catch { /* ignore */ }
+
+    writeProgress(buildProgress({
+      answers: { ...existingAnswers, [slideId]: { type: "mcq", value: opt?.text ?? optionId, correct: isCorrect } },
       score: newScore,
-    });
+    }));
   };
 
+  // ── Short answer ──────────────────────────────────────────────────────────
   const handleSubmitShortAnswer = () => {
     if (isAnswered || !shortAnswer.trim()) return;
     setAnsweredSlides((prev) => new Set(prev).add(slideId));
     setStep("answered");
 
-    writeProgress({
-      answers: {
-        ...getAnswers(),
-        [slideId]: { type: "short_answer", value: shortAnswer.trim() },
-      },
-    });
-  };
-
-  const handleFreeResponseSubmit = (blockId: string, value: string) => {
-    if (!value.trim()) return;
-    const key = `free_${blockId}`;
-    writeProgress({
-      answers: {
-        ...getAnswers(),
-        [key]: { type: "free_response", value: value.trim() },
-      },
-    });
-  };
-
-  // Helper to get current answers from localStorage
-  const getAnswers = (): Record<string, { type: string; value: string; correct?: boolean }> => {
+    let existingAnswers: Record<string, { type: string; value: string; correct?: boolean }> = {};
     try {
-      const raw = localStorage.getItem(progressKeyRef.current);
-      return raw ? (JSON.parse(raw) as StudentProgressData).answers ?? {} : {};
-    } catch { return {}; }
+      const raw = localStorage.getItem(`${LS_STUDENT_PREFIX}${normCode(code)}_${studentIdRef.current}`);
+      if (raw) existingAnswers = (JSON.parse(raw) as StudentProgressData).answers ?? {};
+    } catch { /* ignore */ }
+
+    writeProgress(buildProgress({
+      answers: { ...existingAnswers, [slideId]: { type: "short_answer", value: shortAnswer.trim() } },
+    }));
   };
 
-  // ── Loading spinner ───────────────────────────────────────────────────────
+  // ── Free response (from content blocks) ──────────────────────────────────
+  const handleFreeResponseSubmit = useCallback((blockId: string, value: string) => {
+    if (!value.trim() || !studentIdRef.current) return;
+    let existingAnswers: Record<string, { type: string; value: string; correct?: boolean }> = {};
+    try {
+      const raw = localStorage.getItem(`${LS_STUDENT_PREFIX}${normCode(code)}_${studentIdRef.current}`);
+      if (raw) existingAnswers = (JSON.parse(raw) as StudentProgressData).answers ?? {};
+    } catch { /* ignore */ }
+
+    writeProgress(buildProgress({
+      answers: { ...existingAnswers, [`free_${blockId}`]: { type: "free_response", value: value.trim() } },
+    }));
+  }, [code, writeProgress, buildProgress]);
+
+  // ── Screens ───────────────────────────────────────────────────────────────
+
   if (!loaded) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "var(--color-surface)" }}>
@@ -241,43 +294,44 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
     );
   }
 
-  // ── No session yet (teacher hasn't launched or different origin) ──────────
   if (!liveSession) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: "var(--color-brand-teal)" }}>
+      <div className="min-h-screen flex items-center justify-center px-4"
+        style={{ backgroundColor: "var(--color-brand-teal)" }}>
         <div className="text-center max-w-sm">
           <div className="w-20 h-20 rounded-2xl flex items-center justify-center text-white text-4xl font-bold mx-auto mb-6"
             style={{ backgroundColor: "rgba(255,255,255,0.15)", fontFamily: "var(--font-heading)" }}>
             R
           </div>
-          <p className="text-3xl font-bold tracking-[0.2em] mb-2"
-            style={{ color: "white", fontFamily: "var(--font-heading)" }}>
+          <p className="text-3xl font-bold tracking-[0.2em] mb-4 text-white"
+            style={{ fontFamily: "var(--font-heading)" }}>
             {code.slice(0, 3)}-{code.slice(3)}
           </p>
           <h2 className="text-xl font-bold mb-2 text-white" style={{ fontFamily: "var(--font-heading)" }}>
             Waiting for teacher…
           </h2>
           <p className="text-sm text-white/70 mb-6">
-            The session will start automatically once the teacher opens it on this device.
+            The session will appear automatically once the teacher opens it.
           </p>
           <div className="flex items-center justify-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-white/60 animate-bounce [animation-delay:0ms]" />
-            <div className="w-2 h-2 rounded-full bg-white/60 animate-bounce [animation-delay:150ms]" />
-            <div className="w-2 h-2 rounded-full bg-white/60 animate-bounce [animation-delay:300ms]" />
+            {[0, 150, 300].map((delay) => (
+              <div key={delay} className="w-2 h-2 rounded-full bg-white/60 animate-bounce"
+                style={{ animationDelay: `${delay}ms` }} />
+            ))}
           </div>
-          <p className="text-xs text-white/40 mt-6">Checking every 2 seconds…</p>
         </div>
       </div>
     );
   }
 
-  // ── Session ended ─────────────────────────────────────────────────────────
   if (step === "ended" || liveSession.session.status === "ended") {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4" style={{ backgroundColor: "var(--color-surface)" }}>
+      <div className="min-h-screen flex items-center justify-center px-4"
+        style={{ backgroundColor: "var(--color-surface)" }}>
         <div className="text-center">
           <div className="text-5xl mb-4">🎉</div>
-          <h2 className="text-2xl font-bold mb-2" style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}>
+          <h2 className="text-2xl font-bold mb-2"
+            style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}>
             Session ended
           </h2>
           <p className="text-sm" style={{ color: "var(--color-muted)" }}>
@@ -294,23 +348,28 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
   }
 
   // ── Join form ─────────────────────────────────────────────────────────────
+
   if (step === "join") {
     return (
-      <div className="min-h-screen flex items-center justify-center px-4 py-12" style={{ backgroundColor: "var(--color-surface)" }}>
+      <div className="min-h-screen flex items-center justify-center px-4 py-12"
+        style={{ backgroundColor: "var(--color-surface)" }}>
         <div className="w-full max-w-sm">
-          <div className="rounded-2xl border p-8 text-center" style={{ backgroundColor: "var(--color-white)", borderColor: "var(--color-border)" }}>
+          <div className="rounded-2xl border p-8 text-center"
+            style={{ backgroundColor: "var(--color-white)", borderColor: "var(--color-border)" }}>
             <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-3xl font-bold mx-auto mb-4"
               style={{ backgroundColor: "var(--color-brand-teal)", fontFamily: "var(--font-heading)" }}>
               R
             </div>
-            <h1 className="text-xl font-bold mb-1" style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}>
+            <h1 className="text-xl font-bold mb-1"
+              style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}>
               {activity?.title ?? "Joining session…"}
             </h1>
             {activity?.description && (
               <p className="text-sm mb-2" style={{ color: "var(--color-muted)" }}>{activity.description}</p>
             )}
             <p className="text-sm mb-1" style={{ color: "var(--color-muted)" }}>Session code:</p>
-            <p className="text-2xl font-bold mb-6 tracking-widest" style={{ color: "var(--color-brand-teal)", fontFamily: "var(--font-heading)" }}>
+            <p className="text-2xl font-bold mb-6 tracking-widest"
+              style={{ color: "var(--color-brand-teal)", fontFamily: "var(--font-heading)" }}>
               {code.slice(0, 3)}-{code.slice(3)}
             </p>
             <form onSubmit={handleJoin} className="flex flex-col gap-3">
@@ -329,7 +388,7 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
     );
   }
 
-  // ── Playing / answered ────────────────────────────────────────────────────
+  // ── Playing ───────────────────────────────────────────────────────────────
 
   const checkpoint = slide?.checkpoint;
   const canGoPrev = mySlide > 0;
@@ -350,7 +409,6 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
             {activity?.title}
           </span>
         </div>
-
         <div className="flex items-center gap-3">
           <span className="text-xs hidden sm:block" style={{ color: "var(--color-muted)" }}>
             {mySlide + 1} / {slides.length}
@@ -374,37 +432,30 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
       {/* Slide progress dots */}
       <div className="flex items-center justify-center gap-1.5 py-2 border-b flex-shrink-0"
         style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-white)" }}>
-        {slides.map((_, i) => (
-          <button
-            key={i}
-            onClick={() => handleSlideChange(i)}
+        {slides.map((s, i) => (
+          <button key={i} onClick={() => handleSlideChange(i)}
             className="rounded-full transition-all"
             style={{
-              width: i === mySlide ? 20 : 8,
-              height: 8,
-              backgroundColor: answeredSlides.has(slides[i]?.id ?? "")
+              width: i === mySlide ? 20 : 8, height: 8,
+              backgroundColor: answeredSlides.has(s?.id ?? "")
                 ? "var(--color-brand-mint)"
-                : i === mySlide
-                  ? "var(--color-brand-teal)"
-                  : "var(--color-border)",
-            }}
-          />
+                : i === mySlide ? "var(--color-brand-teal)" : "var(--color-border)",
+            }} />
         ))}
       </div>
 
-      {/* Slide content */}
+      {/* Content */}
       <main className="flex-1 flex flex-col p-4 gap-4 max-w-2xl w-full mx-auto overflow-y-auto">
         {slide && (slide.title || slide.instructions) && (
           <div>
             {slide.title && (
-              <h2 className="text-xl font-bold mb-1" style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}>
+              <h2 className="text-xl font-bold mb-1"
+                style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}>
                 {slide.title}
               </h2>
             )}
             {slide.instructions && (
-              <p className="text-sm" style={{ color: "var(--color-ink-soft)" }}>
-                {slide.instructions}
-              </p>
+              <p className="text-sm" style={{ color: "var(--color-ink-soft)" }}>{slide.instructions}</p>
             )}
           </div>
         )}
@@ -463,7 +514,9 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
                       <span style={{ color: "var(--color-ink)" }}>{opt.text}</span>
                       {isAnswered && isSelected && (
                         <span className="ml-auto">
-                          {opt.isCorrect ? <CheckCircle size={20} color="var(--color-brand-mint)" /> : <XCircle size={20} color="var(--color-brand-coral)" />}
+                          {opt.isCorrect
+                            ? <CheckCircle size={20} color="var(--color-brand-mint)" />
+                            : <XCircle size={20} color="var(--color-brand-coral)" />}
                         </span>
                       )}
                       {isAnswered && !isSelected && opt.isCorrect && (
@@ -487,8 +540,7 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
                     backgroundColor: isAnswered ? "var(--color-surface)" : "var(--color-white)",
                   }}
                   onFocus={(e) => (e.currentTarget.style.borderColor = "var(--color-brand-teal)")}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = "var(--color-border)")}
-                />
+                  onBlur={(e) => (e.currentTarget.style.borderColor = "var(--color-border)")} />
                 {!isAnswered && (
                   <Button variant="primary" onClick={handleSubmitShortAnswer}
                     disabled={!shortAnswer.trim()} className="self-start">
@@ -500,7 +552,7 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
           </div>
         )}
 
-        {/* Feedback banner */}
+        {/* Feedback banners */}
         {feedback === "correct" && (
           <div className="rounded-2xl border-2 p-4 flex items-center gap-3"
             style={{ backgroundColor: "rgba(45,184,158,0.08)", borderColor: "var(--color-brand-mint)" }}>
@@ -535,7 +587,6 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
           </div>
         )}
 
-        {/* No slide */}
         {!slide && (
           <p className="text-center py-12 text-sm" style={{ color: "var(--color-muted)" }}>
             No slides in this activity yet.
@@ -551,11 +602,9 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
           <ChevronLeft size={16} />
           Back
         </Button>
-
         <span className="text-sm font-medium" style={{ color: "var(--color-muted)" }}>
           {mySlide + 1} / {slides.length}
         </span>
-
         {canGoNext ? (
           <Button variant="primary" size="sm" onClick={() => handleSlideChange(mySlide + 1)} className="gap-1.5">
             Next
@@ -621,20 +670,14 @@ function StudentContentBlock({
             {block.prompt}
           </p>
         )}
-        <textarea
-          value={freeText}
-          onChange={(e) => setFreeText(e.target.value)}
-          disabled={submitted}
-          placeholder={block.placeholder || "Type your response here…"}
-          rows={3}
+        <textarea value={freeText} onChange={(e) => setFreeText(e.target.value)} disabled={submitted}
+          placeholder={block.placeholder || "Type your response here…"} rows={3}
           className="w-full text-sm rounded-xl border px-3 py-2 resize-none outline-none transition-colors"
           style={{ borderColor: "var(--color-border)", color: "var(--color-ink)", fontFamily: "var(--font-body)", backgroundColor: submitted ? "var(--color-surface)" : "var(--color-white)" }}
           onFocus={(e) => (e.currentTarget.style.borderColor = "var(--color-brand-teal)")}
-          onBlur={(e) => (e.currentTarget.style.borderColor = "var(--color-border)")}
-        />
+          onBlur={(e) => (e.currentTarget.style.borderColor = "var(--color-border)")} />
         {!submitted ? (
-          <Button variant="primary" size="sm" className="self-start"
-            disabled={!freeText.trim()}
+          <Button variant="primary" size="sm" className="self-start" disabled={!freeText.trim()}
             onClick={() => { onFreeResponseSubmit(block.id, freeText); setSubmitted(true); }}>
             Submit
           </Button>
@@ -650,7 +693,8 @@ function StudentContentBlock({
   if (block.type === "graph") {
     return (
       <div className="relative rounded-xl overflow-hidden border" style={{ height: 320, borderColor: "var(--color-border)" }}>
-        <DesmosCalculator key={`student-${block.id}`} readOnly initialState={block.desmosState ?? undefined} className="absolute inset-0" />
+        <DesmosCalculator key={`student-${block.id}`} readOnly initialState={block.desmosState ?? undefined}
+          className="absolute inset-0" />
       </div>
     );
   }

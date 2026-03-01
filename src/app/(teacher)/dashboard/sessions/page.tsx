@@ -298,29 +298,50 @@ function SessionsPage() {
 
 // ── Live student roster ───────────────────────────────────────────────────────
 
+// Strip dashes and lowercase so "9VX-6PY" and "9VX6PY" both resolve correctly
+function normCode(code: string) {
+  return code.replace(/-/g, "").toLowerCase();
+}
+
 function LiveRoster({ joinCode, totalSlides }: { joinCode: string; totalSlides: number }) {
   const [students, setStudents] = useState<StudentProgressData[]>([]);
-  const prefix = `${LS_STUDENT_PREFIX}${joinCode.toLowerCase()}_`;
+  const lsPrefix = `${LS_STUDENT_PREFIX}${normCode(joinCode)}_`;
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback(async () => {
+    // 1. Try API (cross-device students)
+    try {
+      const res = await fetch(`/api/live/${normCode(joinCode)}`);
+      if (res.ok) {
+        const data = await res.json() as { students?: Record<string, StudentProgressData> };
+        if (data.students) {
+          const found = Object.values(data.students);
+          found.sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
+          setStudents(found);
+          return;
+        }
+      }
+    } catch { /* fallback */ }
+
+    // 2. Fallback: localStorage (same-device students)
     const found: StudentProgressData[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key?.startsWith(prefix)) {
+      if (key?.startsWith(lsPrefix)) {
         try { found.push(JSON.parse(localStorage.getItem(key)!)); } catch { /* skip */ }
       }
     }
     found.sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
     setStudents(found);
-  }, [prefix]);
+  }, [joinCode, lsPrefix]);
 
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 1500);
-    const handleStorage = (e: StorageEvent) => { if (e.key?.startsWith(prefix)) refresh(); };
+    const interval = setInterval(refresh, 2000);
+    // Storage events catch same-browser students immediately
+    const handleStorage = (e: StorageEvent) => { if (e.key?.startsWith(lsPrefix)) refresh(); };
     window.addEventListener("storage", handleStorage);
     return () => { clearInterval(interval); window.removeEventListener("storage", handleStorage); };
-  }, [prefix, refresh]);
+  }, [lsPrefix, refresh]);
 
   if (students.length === 0) {
     return (

@@ -17,24 +17,40 @@ export const LS_STUDENT_PREFIX = "rk_student_";
 
 function writeLiveSession(session: Session, activity: Activity) {
   if (typeof window === "undefined") return;
+  const payload = { session, activity };
+  // localStorage — same-browser / same-device fallback
   try {
     localStorage.setItem(
       `${LS_LIVE_SESSION_PREFIX}${session.joinCode.toLowerCase()}`,
-      JSON.stringify({ session, activity })
+      JSON.stringify(payload)
     );
   } catch { /* quota exceeded */ }
+  // API relay — works across different browsers and devices
+  fetch(`/api/live/${session.joinCode.toLowerCase()}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session, activity }),
+  }).catch(() => { /* fire-and-forget */ });
 }
 
 function patchLiveSession(joinCode: string, patch: Partial<Session>) {
   if (typeof window === "undefined") return;
+  // localStorage
   try {
     const key = `${LS_LIVE_SESSION_PREFIX}${joinCode.toLowerCase()}`;
     const raw = localStorage.getItem(key);
-    if (!raw) return;
-    const data = JSON.parse(raw) as { session: Session; activity: Activity };
-    data.session = { ...data.session, ...patch };
-    localStorage.setItem(key, JSON.stringify(data));
+    if (raw) {
+      const data = JSON.parse(raw) as { session: Session; activity: Activity };
+      data.session = { ...data.session, ...patch };
+      localStorage.setItem(key, JSON.stringify(data));
+    }
   } catch { /* quota exceeded */ }
+  // API relay
+  fetch(`/api/live/${joinCode.toLowerCase()}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session: patch }),
+  }).catch(() => { /* fire-and-forget */ });
 }
 
 interface TeacherSessionStore {
