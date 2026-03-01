@@ -201,9 +201,13 @@ function SessionsPage() {
                 </div>
               ) : currentSlide.desmosState ? (
                 <div className="relative flex-1 min-h-52 rounded-xl overflow-hidden border"
-                  style={{ borderColor: "var(--color-border)" }}>
-                  <DesmosCalculator key={currentSlide.id} readOnly initialState={currentSlide.desmosState}
-                    className="absolute inset-0" />
+                  style={{ height: 460, borderColor: "var(--color-border)" }}>
+                  <DesmosCalculator
+                    key={currentSlide.id}
+                    studentMode
+                    initialState={currentSlide.desmosState}
+                    className="absolute inset-0"
+                  />
                 </div>
               ) : null}
 
@@ -484,8 +488,8 @@ function SessionBlock({ block }: { block: ContentBlock }) {
 
   if (block.type === "graph") {
     return (
-      <div className="relative rounded-xl overflow-hidden border" style={{ height: 340, borderColor: "var(--color-border)" }}>
-        <DesmosCalculator key={`session-${block.id}`} readOnly initialState={block.desmosState ?? undefined} className="absolute inset-0" />
+      <div className="relative rounded-xl overflow-hidden border" style={{ height: 460, borderColor: "var(--color-border)" }}>
+        <DesmosCalculator key={`session-${block.id}`} studentMode initialState={block.desmosState ?? undefined} className="absolute inset-0" />
       </div>
     );
   }
