@@ -1,13 +1,57 @@
 "use client";
 
 import { create } from "zustand";
-import { type Activity, type Session, type SessionStatus, type Slide, type StudentSession, type Response } from "@/types";
+import { type Activity, type Session, type SessionStatus, type Slide, type StudentSession, type Response, type ContentBlock } from "@/types";
 import { generateJoinCode, generateId } from "@/lib/utils/session";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Teacher Session Store
 // Manages the teacher's live session state (local-first, later Supabase sync)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** localStorage key prefix for live sessions — students read from this */
+export const LS_LIVE_SESSION_PREFIX = "rk_live_session_";
+
+/** localStorage key prefix for student progress — teacher reads from this */
+export const LS_STUDENT_PREFIX = "rk_student_";
+
+function writeLiveSession(session: Session, activity: Activity) {
+  if (typeof window === "undefined") return;
+  const payload = { session, activity };
+  // localStorage — same-browser / same-device fallback
+  try {
+    localStorage.setItem(
+      `${LS_LIVE_SESSION_PREFIX}${session.joinCode.toLowerCase()}`,
+      JSON.stringify(payload)
+    );
+  } catch { /* quota exceeded */ }
+  // API relay — works across different browsers and devices
+  fetch(`/api/live/${session.joinCode.toLowerCase()}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session, activity }),
+  }).catch(() => { /* fire-and-forget */ });
+}
+
+function patchLiveSession(joinCode: string, patch: Partial<Session>) {
+  if (typeof window === "undefined") return;
+  // localStorage
+  try {
+    const key = `${LS_LIVE_SESSION_PREFIX}${joinCode.toLowerCase()}`;
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const data = JSON.parse(raw) as { session: Session; activity: Activity };
+      data.session = { ...data.session, ...patch };
+      localStorage.setItem(key, JSON.stringify(data));
+    }
+  } catch { /* quota exceeded */ }
+  // API relay
+  fetch(`/api/live/${joinCode.toLowerCase()}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session: patch }),
+  }).catch(() => { /* fire-and-forget */ });
+}
 
 interface TeacherSessionStore {
   session: Session | null;
@@ -40,48 +84,51 @@ export const useTeacherSessionStore = create<TeacherSessionStore>((set, get) => 
       activityId: activity.id,
       teacherId: "local-teacher",
       joinCode: generateJoinCode(),
-      status: "waiting",
+      status: "active",
       currentSlide: 0,
-      startedAt: null,
+      startedAt: new Date().toISOString(),
       endedAt: null,
       createdAt: new Date().toISOString(),
       activity,
     };
     set({ session, activity, students: [], responses: [] });
+    // Publish to localStorage so students can read it by join code
+    writeLiveSession(session, activity);
     return session;
   },
 
   endSession: () => {
-    set((state) => ({
-      session: state.session
-        ? { ...state.session, status: "ended", endedAt: new Date().toISOString() }
-        : null,
-    }));
+    const { session } = get();
+    const ended = session
+      ? { ...session, status: "ended" as const, endedAt: new Date().toISOString() }
+      : null;
+    set({ session: ended });
+    if (ended) patchLiveSession(ended.joinCode, { status: "ended", endedAt: ended.endedAt });
   },
 
   advanceSlide: (direction) => {
     const { session, activity } = get();
     if (!session || !activity?.slides) return;
-    const slides = activity.slides;
     const next = session.currentSlide + direction;
-    if (next < 0 || next >= slides.length) return;
-    set((state) => ({
-      session: state.session ? { ...state.session, currentSlide: next, status: "active" } : null,
-    }));
+    if (next < 0 || next >= activity.slides.length) return;
+    const updated = { ...session, currentSlide: next, status: "active" as const };
+    set({ session: updated });
+    patchLiveSession(session.joinCode, { currentSlide: next, status: "active" });
   },
 
   goToSlide: (index) => {
-    const { activity } = get();
-    if (!activity?.slides || index < 0 || index >= activity.slides.length) return;
-    set((state) => ({
-      session: state.session ? { ...state.session, currentSlide: index, status: "active" } : null,
-    }));
+    const { session, activity } = get();
+    if (!session || !activity?.slides || index < 0 || index >= activity.slides.length) return;
+    const updated = { ...session, currentSlide: index, status: "active" as const };
+    set({ session: updated });
+    patchLiveSession(session.joinCode, { currentSlide: index, status: "active" });
   },
 
   updateStatus: (status) => {
-    set((state) => ({
-      session: state.session ? { ...state.session, status } : null,
-    }));
+    const { session } = get();
+    if (!session) return;
+    set({ session: { ...session, status } });
+    patchLiveSession(session.joinCode, { status });
   },
 
   addStudent: (student) => {
@@ -163,6 +210,8 @@ interface BuilderStore {
   activity: Activity | null;
   activeSlideIndex: number;
   isDirty: boolean;
+  /** Activity queued by the AI generator — builder picks it up on mount then clears it. */
+  pendingActivity: Activity | null;
 
   // Actions
   setActivity: (activity: Activity) => void;
@@ -173,12 +222,21 @@ interface BuilderStore {
   reorderSlide: (from: number, to: number) => void;
   updateActivity: (patch: Partial<Activity>) => void;
   markSaved: () => void;
+  setPendingActivity: (activity: Activity) => void;
+  clearPendingActivity: () => void;
+
+  // Content block actions
+  addBlock: (slideIndex: number, block: ContentBlock) => void;
+  replaceBlock: (slideIndex: number, blockId: string, newBlock: ContentBlock) => void;
+  removeBlock: (slideIndex: number, blockId: string) => void;
+  reorderBlocks: (slideIndex: number, from: number, to: number) => void;
 }
 
 export const useBuilderStore = create<BuilderStore>((set, get) => ({
   activity: null,
   activeSlideIndex: 0,
   isDirty: false,
+  pendingActivity: null,
 
   setActivity: (activity) => {
     set({ activity, activeSlideIndex: 0, isDirty: false });
@@ -209,6 +267,7 @@ export const useBuilderStore = create<BuilderStore>((set, get) => ({
       title: null,
       instructions: null,
       graphState: null,
+      desmosState: null,
       checkpoint: null,
       createdAt: new Date().toISOString(),
     };
@@ -250,5 +309,58 @@ export const useBuilderStore = create<BuilderStore>((set, get) => ({
 
   markSaved: () => {
     set({ isDirty: false });
+  },
+
+  setPendingActivity: (activity) => {
+    set({ pendingActivity: activity });
+  },
+
+  clearPendingActivity: () => {
+    set({ pendingActivity: null });
+  },
+
+  addBlock: (slideIndex, block) => {
+    const { activity } = get();
+    if (!activity?.slides) return;
+    const slides = [...activity.slides];
+    const slide = slides[slideIndex];
+    slides[slideIndex] = { ...slide, content: [...(slide.content ?? []), block] };
+    set({ activity: { ...activity, slides }, isDirty: true });
+  },
+
+  replaceBlock: (slideIndex, blockId, newBlock) => {
+    const { activity } = get();
+    if (!activity?.slides) return;
+    const slides = [...activity.slides];
+    const slide = slides[slideIndex];
+    slides[slideIndex] = {
+      ...slide,
+      content: (slide.content ?? []).map((b) => (b.id === blockId ? newBlock : b)),
+    };
+    set({ activity: { ...activity, slides }, isDirty: true });
+  },
+
+  removeBlock: (slideIndex, blockId) => {
+    const { activity } = get();
+    if (!activity?.slides) return;
+    const slides = [...activity.slides];
+    const slide = slides[slideIndex];
+    slides[slideIndex] = {
+      ...slide,
+      content: (slide.content ?? []).filter((b) => b.id !== blockId),
+    };
+    set({ activity: { ...activity, slides }, isDirty: true });
+  },
+
+  reorderBlocks: (slideIndex, from, to) => {
+    const { activity } = get();
+    if (!activity?.slides) return;
+    const slides = [...activity.slides];
+    const slide = slides[slideIndex];
+    const blocks = [...(slide.content ?? [])];
+    const [moved] = blocks.splice(from, 1);
+    blocks.splice(to, 0, moved);
+    slides[slideIndex] = { ...slide, content: blocks };
+    set({ activity: { ...activity, slides }, isDirty: true });
   },
 }));
