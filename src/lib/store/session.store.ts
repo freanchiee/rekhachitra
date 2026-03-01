@@ -12,6 +12,9 @@ import { generateJoinCode, generateId } from "@/lib/utils/session";
 /** localStorage key prefix for live sessions — students read from this */
 export const LS_LIVE_SESSION_PREFIX = "rk_live_session_";
 
+/** localStorage key prefix for student progress — teacher reads from this */
+export const LS_STUDENT_PREFIX = "rk_student_";
+
 function writeLiveSession(session: Session, activity: Activity) {
   if (typeof window === "undefined") return;
   try {
@@ -65,7 +68,7 @@ export const useTeacherSessionStore = create<TeacherSessionStore>((set, get) => 
       activityId: activity.id,
       teacherId: "local-teacher",
       joinCode: generateJoinCode(),
-      status: "waiting",
+      status: "active",
       currentSlide: 0,
       startedAt: new Date().toISOString(),
       endedAt: null,
