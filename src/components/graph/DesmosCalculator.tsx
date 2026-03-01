@@ -14,6 +14,12 @@ interface Props {
   className?: string;
   style?: React.CSSProperties;
   readOnly?: boolean;
+  /**
+   * Student exploration mode: shows the expressions panel with draggable sliders
+   * but hides formula-editing UI (no + button, no keypad, no settings menu).
+   * Takes precedence over readOnly when both are set.
+   */
+  studentMode?: boolean;
   /** Loaded once on mount. Switch slides by changing the `key` prop. */
   initialState?: Record<string, unknown> | null;
   onStateChange?: (state: Record<string, unknown>) => void;
@@ -26,7 +32,7 @@ const SCRIPT_SRC =
 // ── Component ─────────────────────────────────────────────────────────────────
 
 const DesmosCalculator = forwardRef<DesmosHandle, Props>(
-  ({ className, style, readOnly = false, initialState, onStateChange }, ref) => {
+  ({ className, style, readOnly = false, studentMode = false, initialState, onStateChange }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const calcRef = useRef<any>(null);
     const onChangeRef = useRef(onStateChange);
@@ -42,23 +48,31 @@ const DesmosCalculator = forwardRef<DesmosHandle, Props>(
         if (!containerRef.current || !(window as any).Desmos) return;
         if (calcRef.current) return; // already mounted
 
+        // Three display modes:
+        //   edit    — full Desmos UI (teacher building an activity)
+        //   student — expressions panel + sliders visible; no editing chrome
+        //   display — completely read-only, no panel (teacher session preview)
+        const isEdit    = !readOnly && !studentMode;
+        const isStudent = studentMode;               // overrides readOnly
+        const isDisplay = readOnly && !studentMode;
+
         const calc = (window as any).Desmos.GraphingCalculator(containerRef.current, {
-          readOnly,
-          settingsMenu: !readOnly,
-          expressionsTopbar: !readOnly,
-          expressions: !readOnly,
-          zoomButtons: true,
-          keypad: !readOnly,
-          border: false,
-          images: !readOnly,
-          notes: !readOnly,
-          folders: !readOnly,
-          sliders: !readOnly,          // enable "add slider: a b all" prompt
-          links: !readOnly,
-          distributions: !readOnly,
-          lockViewport: readOnly,
+          readOnly:          isDisplay,              // Desmos API level lock
+          settingsMenu:      isEdit,
+          expressionsTopbar: isEdit,                 // hides the "+" add-expression button
+          expressions:       isEdit || isStudent,    // show panel in edit + student modes
+          zoomButtons:       true,
+          keypad:            isEdit,                 // hide formula keyboard in student mode
+          border:            false,
+          images:            isEdit,
+          notes:             isEdit,
+          folders:           isEdit,
+          sliders:           isEdit || isStudent,    // enable "add slider: a b all" prompt
+          links:             isEdit,
+          distributions:     isEdit,
+          lockViewport:      isDisplay,
           administerSecretFolders: false,
-          autosize: true,
+          autosize:          true,
         });
 
         if (initialState && Object.keys(initialState).length > 0) {

@@ -469,11 +469,11 @@ export default function StudentJoinPage({ params }: { params: Promise<{ code: st
           </div>
         )}
 
-        {/* Legacy desmosState */}
+        {/* Legacy desmosState (AI-generated slides without content blocks) */}
         {(slide?.content?.length ?? 0) === 0 && slide?.desmosState && (
           <div className="relative w-full rounded-xl overflow-hidden border"
-            style={{ height: 320, borderColor: "var(--color-border)" }}>
-            <DesmosCalculator key={slide.id} readOnly initialState={slide.desmosState} className="absolute inset-0" />
+            style={{ height: 460, borderColor: "var(--color-border)" }}>
+            <DesmosCalculator key={slide.id} studentMode initialState={slide.desmosState} className="absolute inset-0" />
           </div>
         )}
 
@@ -692,8 +692,10 @@ function StudentContentBlock({
 
   if (block.type === "graph") {
     return (
-      <div className="relative rounded-xl overflow-hidden border" style={{ height: 320, borderColor: "var(--color-border)" }}>
-        <DesmosCalculator key={`student-${block.id}`} readOnly initialState={block.desmosState ?? undefined}
+      // studentMode shows the expression panel with draggable sliders so students
+      // can interact with variables like (a,b). Height 460 fits panel + graph.
+      <div className="relative rounded-xl overflow-hidden border" style={{ height: 460, borderColor: "var(--color-border)" }}>
+        <DesmosCalculator key={`student-${block.id}`} studentMode initialState={block.desmosState ?? undefined}
           className="absolute inset-0" />
       </div>
     );
