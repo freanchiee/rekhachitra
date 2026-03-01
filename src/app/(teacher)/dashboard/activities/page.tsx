@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, Clock, Sparkles, Layers, Trash2, Edit2 } from "lucide-react";
+import { Plus, Clock, Sparkles, Layers, Trash2, Edit2, Rocket } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
-import type { Activity } from "@/types";
+import type { Activity, ActivityStatus } from "@/types";
 
 const LS_ACTIVITIES_KEY = "rk_activities";
 
-const statusVariant: Record<string, "neutral" | "mint" | "teal"> = {
+const statusVariant: Record<ActivityStatus, "neutral" | "mint" | "teal"> = {
   draft: "neutral",
   active: "mint",
   archived: "teal",
@@ -51,9 +51,19 @@ export default function ActivitiesPage() {
       delete map[id];
       localStorage.setItem(LS_ACTIVITIES_KEY, JSON.stringify(map));
       setActivities((prev) => prev.filter((a) => a.id !== id));
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
+  };
+
+  const handleStatusChange = (id: string, status: ActivityStatus) => {
+    try {
+      const raw = localStorage.getItem(LS_ACTIVITIES_KEY);
+      if (!raw) return;
+      const map: Record<string, Activity> = JSON.parse(raw);
+      if (!map[id]) return;
+      map[id] = { ...map[id], status, updatedAt: new Date().toISOString() };
+      localStorage.setItem(LS_ACTIVITIES_KEY, JSON.stringify(map));
+      setActivities((prev) => prev.map((a) => (a.id === id ? { ...a, status } : a)));
+    } catch { /* ignore */ }
   };
 
   return (
@@ -104,6 +114,7 @@ export default function ActivitiesPage() {
               key={activity.id}
               activity={activity}
               onDelete={() => handleDelete(activity.id)}
+              onStatusChange={(status) => handleStatusChange(activity.id, status)}
             />
           ))}
           {/* Create new card */}
@@ -165,18 +176,19 @@ export default function ActivitiesPage() {
 function ActivityCard({
   activity,
   onDelete,
+  onStatusChange,
 }: {
   activity: Activity;
   onDelete: () => void;
+  onStatusChange: (status: ActivityStatus) => void;
 }) {
   const slideCount = activity.slides?.length ?? 0;
-  const blockCount = activity.slides?.reduce(
-    (sum, s) => sum + (s.content?.length ?? 0),
-    0
-  ) ?? 0;
+  const blockCount = activity.slides?.reduce((sum, s) => sum + (s.content?.length ?? 0), 0) ?? 0;
+  const isDraft = activity.status === "draft";
 
   return (
     <div className="card p-5 flex flex-col gap-3 hover:shadow-brand transition-shadow group">
+      {/* Top row: status badge + delete */}
       <div className="flex items-start justify-between gap-2">
         <Badge variant={statusVariant[activity.status] ?? "neutral"}>
           {activity.status.charAt(0).toUpperCase() + activity.status.slice(1)}
@@ -184,9 +196,7 @@ function ActivityCard({
         <button
           onClick={(e) => {
             e.preventDefault();
-            if (confirm("Delete this activity? This cannot be undone.")) {
-              onDelete();
-            }
+            if (confirm("Delete this activity? This cannot be undone.")) onDelete();
           }}
           className="p-1 rounded hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
           aria-label="Delete activity"
@@ -196,11 +206,10 @@ function ActivityCard({
         </button>
       </div>
 
+      {/* Title + description */}
       <div>
-        <h3
-          className="font-bold mb-1 line-clamp-2"
-          style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}
-        >
+        <h3 className="font-bold mb-1 line-clamp-2"
+          style={{ color: "var(--color-ink)", fontFamily: "var(--font-heading)" }}>
           {activity.title || "Untitled Activity"}
         </h3>
         {activity.description && (
@@ -210,6 +219,7 @@ function ActivityCard({
         )}
       </div>
 
+      {/* Meta row */}
       <div className="flex items-center gap-4 text-xs" style={{ color: "var(--color-subtle)" }}>
         <span className="flex items-center gap-1">
           <Layers size={11} />
@@ -224,18 +234,35 @@ function ActivityCard({
         </span>
       </div>
 
+      {/* Action buttons */}
       <div className="flex gap-2 pt-1">
-        <Link
-          href={`/dashboard/activities/new?id=${activity.id}`}
-          className="btn btn-outline btn-sm flex-1 text-center gap-1.5"
-        >
+        <Link href={`/dashboard/activities/new?id=${activity.id}`}
+          className="btn btn-outline btn-sm gap-1.5">
           <Edit2 size={13} />
           Edit
         </Link>
-        <Link
-          href={`/dashboard/sessions?activity=${activity.id}`}
-          className="btn btn-primary btn-sm flex-1 text-center gap-1.5"
-        >
+
+        {isDraft ? (
+          <button
+            onClick={() => onStatusChange("active")}
+            className="btn btn-sm gap-1.5 flex-1 text-center"
+            style={{ backgroundColor: "rgba(245,192,0,0.12)", color: "#92740a", border: "1px solid rgba(245,192,0,0.35)", fontFamily: "var(--font-body)", borderRadius: "var(--radius-md)" }}
+          >
+            <Rocket size={13} />
+            Publish
+          </button>
+        ) : (
+          <button
+            onClick={() => onStatusChange("draft")}
+            className="btn btn-sm gap-1.5 flex-1 text-center"
+            style={{ backgroundColor: "var(--color-surface)", color: "var(--color-muted)", border: "1px solid var(--color-border)", fontFamily: "var(--font-body)", borderRadius: "var(--radius-md)" }}
+          >
+            Unpublish
+          </button>
+        )}
+
+        <Link href={`/dashboard/sessions?activity=${activity.id}`}
+          className="btn btn-primary btn-sm gap-1.5">
           Launch
         </Link>
       </div>

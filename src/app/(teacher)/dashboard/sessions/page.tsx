@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef, Suspense } from "react";
+import { useState, useCallback, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight, Square, Users, Image as ImageIcon, CheckCircle, XCircle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -89,17 +89,19 @@ export default function SessionsPageWrapper() {
 
 function SessionsPage() {
   const searchParams = useSearchParams();
-  const { session, startSession, endSession, advanceSlide } = useTeacherSessionStore();
+  const { session, startSession, endSession, advanceSlide, reset } = useTeacherSessionStore();
 
-  const startedRef = useRef(false);
   const [timerKey, setTimerKey] = useState(0);
 
-  // Auto-launch session on mount — no manual "Launch" button needed
-  useEffect(() => {
-    if (session || startedRef.current) return;
-    startedRef.current = true;
+  // Read the activity id from the URL — used as the effect dependency so that
+  // navigating from one activity's Launch to another always starts a fresh session.
+  const activityId = searchParams.get("activity") ?? "";
 
-    const activityId = searchParams.get("activity");
+  // Always start a fresh session for the requested activity.
+  // - Runs on mount and whenever the ?activity= param changes.
+  // - cleanup (return () => reset()) handles React Strict Mode double-invocation
+  //   and clears the session when the teacher navigates away.
+  useEffect(() => {
     let activityToStart = DEMO_ACTIVITY;
     if (activityId) {
       try {
@@ -112,15 +114,17 @@ function SessionsPage() {
     }
 
     const newSession = startSession(activityToStart);
-    // Belt-and-suspenders: write directly with status "active"
     try {
       localStorage.setItem(
         `${LS_LIVE_SESSION_PREFIX}${newSession.joinCode.toLowerCase()}`,
         JSON.stringify({ session: { ...newSession, status: "active" }, activity: activityToStart })
       );
     } catch { /* storage quota */ }
+
+    return () => reset(); // clear session on unmount / between Strict Mode runs
+  // startSession and reset are stable Zustand refs — safe to omit from deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [activityId]);
 
   const handleAdvance = useCallback((dir: 1 | -1) => {
     advanceSlide(dir);
