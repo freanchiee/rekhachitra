@@ -29,6 +29,52 @@ const SCRIPT_ID = "desmos-api-v18";
 const SCRIPT_SRC =
   "https://www.desmos.com/api/v1.8/calculator.js?apiKey=dcb31709b452b1cf9dc26972add0fda6";
 
+// ── Slider-bounds injection ───────────────────────────────────────────────────
+// AI-generated Desmos states often contain slider variables like `a=1` without
+// `sliderBounds`. Desmos only shows the interactive slider track when the bounds
+// are present in the loaded state. This helper detects those expressions and
+// injects default bounds so sliders render immediately on load.
+
+/** Returns true if `latex` looks like a bare variable assignment: `a=1`, `v_0=15`, `\theta=0.9` */
+function isSliderLike(latex: string): boolean {
+  const s = latex.trim().replace(/\s+/g, "");
+  // LHS: plain identifier OR backslash-command (e.g. \theta), optional subscript
+  // RHS: a plain number (integer or decimal, optionally negative)
+  return /^(?:\\[a-zA-Z]+|[a-zA-Z][a-zA-Z0-9]*)(?:_\{?[a-zA-Z0-9]+\}?)?=-?\d+(?:\.\d+)?$/.test(s);
+}
+
+/** Inject `sliderBounds` into any expression that looks like a slider but is missing them. */
+function injectSliderBounds(
+  state: Record<string, unknown>,
+  bounds = { min: "-10", max: "10", step: "" }
+): Record<string, unknown> {
+  try {
+    const exprs = (state?.expressions as { list?: unknown[] } | undefined)?.list;
+    if (!Array.isArray(exprs)) return state;
+    let changed = false;
+    const processed = exprs.map((raw) => {
+      const expr = raw as Record<string, unknown>;
+      if (
+        expr.type === "expression" &&
+        typeof expr.latex === "string" &&
+        !expr.sliderBounds &&
+        isSliderLike(expr.latex)
+      ) {
+        changed = true;
+        return { ...expr, sliderBounds: bounds };
+      }
+      return expr;
+    });
+    if (!changed) return state;
+    return {
+      ...state,
+      expressions: { ...(state.expressions as Record<string, unknown>), list: processed },
+    };
+  } catch {
+    return state;
+  }
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 const DesmosCalculator = forwardRef<DesmosHandle, Props>(
@@ -75,8 +121,14 @@ const DesmosCalculator = forwardRef<DesmosHandle, Props>(
           autosize:          true,
         });
 
-        if (initialState && Object.keys(initialState).length > 0) {
-          calc.setState(initialState, { allowUndo: false });
+        // Pre-process the state to inject sliderBounds so that AI-generated
+        // expressions like `a=1` render with interactive slider tracks.
+        const stateToLoad =
+          initialState && Object.keys(initialState).length > 0
+            ? injectSliderBounds(initialState)
+            : initialState;
+        if (stateToLoad && Object.keys(stateToLoad).length > 0) {
+          calc.setState(stateToLoad, { allowUndo: false });
         }
 
         calc.observeEvent("change", () => {

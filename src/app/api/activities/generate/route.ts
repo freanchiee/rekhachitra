@@ -20,49 +20,49 @@ DESMOS STATE FORMAT — use EXACTLY this JSON structure for any slide that needs
   }
 }
 
-SLIDER expressions — add separate expression entries for each slider variable:
-{ "type": "expression", "id": "2", "latex": "a=0" }
-Students will see "Add slider: a" automatically in Desmos.
+SLIDER expressions — each slider variable MUST have both the assignment AND sliderBounds:
+{ "type": "expression", "id": "2", "latex": "a=0", "sliderBounds": { "min": "-10", "max": "10", "step": "" } }
+Without sliderBounds the slider track will NOT appear for students.
 
-COMMON PHYSICS SETUPS (use these as reference):
+COMMON PHYSICS SETUPS (use these as reference — always include sliderBounds on slider expressions):
 
 1. Point with sliders (Defining Motion):
    expressions list: [
-     { "id":"1", "latex":"(a,b)", "color":"#c74440" },
-     { "id":"2", "latex":"a=1" },
-     { "id":"3", "latex":"b=1" }
+     { "type":"expression", "id":"1", "latex":"(a,b)", "color":"#c74440" },
+     { "type":"expression", "id":"2", "latex":"a=1", "sliderBounds":{"min":"-10","max":"10","step":""} },
+     { "type":"expression", "id":"3", "latex":"b=1", "sliderBounds":{"min":"-10","max":"10","step":""} }
    ]
 
 2. Linear motion x = x₀ + vt (1D SUVAT):
    expressions list: [
-     { "id":"1", "latex":"(x_0+v\\cdot t, 0)", "color":"#c74440" },
-     { "id":"2", "latex":"t=0" },
-     { "id":"3", "latex":"v=2" },
-     { "id":"4", "latex":"x_0=0" }
+     { "type":"expression", "id":"1", "latex":"(x_0+v\\cdot t, 0)", "color":"#c74440" },
+     { "type":"expression", "id":"2", "latex":"t=0", "sliderBounds":{"min":"0","max":"10","step":""} },
+     { "type":"expression", "id":"3", "latex":"v=2", "sliderBounds":{"min":"-10","max":"10","step":""} },
+     { "type":"expression", "id":"4", "latex":"x_0=0", "sliderBounds":{"min":"-10","max":"10","step":""} }
    ]
    viewport: { "xmin": -2, "ymin": -3, "xmax": 20, "ymax": 3 }
 
 3. SUVAT distance (s = ut + ½at²):
    expressions list: [
-     { "id":"1", "latex":"s=u\\cdot t+\\frac{1}{2}a\\cdot t^2" },
-     { "id":"2", "latex":"u=5" },
-     { "id":"3", "latex":"a=2" }
+     { "type":"expression", "id":"1", "latex":"s=u\\cdot t+\\frac{1}{2}a\\cdot t^2" },
+     { "type":"expression", "id":"2", "latex":"u=5", "sliderBounds":{"min":"-20","max":"20","step":""} },
+     { "type":"expression", "id":"3", "latex":"a=2", "sliderBounds":{"min":"-10","max":"10","step":""} }
    ]
 
 4. Projectile / parabolic motion (2D):
    expressions list: [
-     { "id":"1", "latex":"(v_0\\cos\\left(\\theta\\right)\\cdot t, v_0\\sin\\left(\\theta\\right)\\cdot t-4.9t^2)", "color":"#c74440" },
-     { "id":"2", "latex":"t=0" },
-     { "id":"3", "latex":"v_0=15" },
-     { "id":"4", "latex":"\\theta=0.9" }
+     { "type":"expression", "id":"1", "latex":"(v_0\\cos\\left(\\theta\\right)\\cdot t, v_0\\sin\\left(\\theta\\right)\\cdot t-4.9t^2)", "color":"#c74440" },
+     { "type":"expression", "id":"2", "latex":"t=0", "sliderBounds":{"min":"0","max":"5","step":""} },
+     { "type":"expression", "id":"3", "latex":"v_0=15", "sliderBounds":{"min":"0","max":"30","step":""} },
+     { "type":"expression", "id":"4", "latex":"\\theta=0.9", "sliderBounds":{"min":"0","max":"1.57","step":""} }
    ]
    viewport: { "xmin": -2, "ymin": -2, "xmax": 40, "ymax": 15 }
 
 5. Velocity-time graph:
    expressions list: [
-     { "id":"1", "latex":"y=a\\cdot x+u", "color":"#2d70b3" },
-     { "id":"2", "latex":"a=2" },
-     { "id":"3", "latex":"u=0" }
+     { "type":"expression", "id":"1", "latex":"y=a\\cdot x+u", "color":"#2d70b3" },
+     { "type":"expression", "id":"2", "latex":"a=2", "sliderBounds":{"min":"-10","max":"10","step":""} },
+     { "type":"expression", "id":"3", "latex":"u=0", "sliderBounds":{"min":"-20","max":"20","step":""} }
    ]
    axis labels — use separate text expressions for axis labels when helpful.
 
